@@ -16,7 +16,7 @@
 
 #include <stdint.h>
 #include <string.h>
-#include "yespower-1.0.1/yespower.h"  // Use the official yespower header
+#include "yespower-1.0.1/yespower.h"  // Use the official yespower header from L22
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -79,8 +79,7 @@ int yespowerurx_opt(const void *pdata, void *phash)
 
     /* 
      * Call the yespower hash function.
-     * We cast phash to a pointer to an array of 32 bytes to match the expected
-     * function prototype.
+     * The fourth parameter is cast to (uint8_t *) to match the expected type.
      */
-    return yespower_tls(data, 80, &params, (uint8_t (*)[32])phash);
+    return yespower_tls(data, 80, &params, (uint8_t *)phash);
 }
