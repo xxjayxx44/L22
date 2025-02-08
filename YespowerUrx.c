@@ -1,85 +1,90 @@
-/* 
- * yespowerurx.c
- *
- * Optimized yespower hashing routine for the L22 miner.
- *
- * This file implements a function that takes an 80‐byte block header
- * and produces a yespower hash via yespower_tls(). Two main optimizations:
- *
- *  1. The yespower parameters are initialized once and reused.
- *  2. When possible, the 80 bytes are copied using SSE2 16‐byte loads
- *     (if the input is 16‐byte aligned), which is faster than memcpy.
- *
- * These changes can yield a 50–120% speedup in the hashing inner loop
- * while still producing valid yespower hashes.
- */
-
-#include <stdint.h>
-#include <string.h>
-#include "yespower-1.0.1/yespower.h"  // Use the official yespower header from L22
-
-#ifdef __SSE2__
-#include <emmintrin.h>
-#endif
-
 /*
- * yespowerurx_opt - Optimized yespower hash function.
+ * Copyright 2011 ArtForz, 2011-2014 pooler, 2018 The Resistance developers,
+ * 2020 The Sugarchain Yumekawa developers
+ * All rights reserved.
  *
- * @pdata: pointer to an 80-byte block header.
- * @phash: pointer to a buffer (at least 32 bytes) where the hash will be written.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
  *
- * Returns: the result of yespower_tls() (nonzero on success, zero on failure).
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  *
- * Note: The output hash will be valid for the current yespower parameters.
- *       Ensure that the parameters below are set to match your network's requirements.
+ * This file is loosely based on a tiny portion of pooler's cpuminer scrypt.c.
  */
-int yespowerurx_opt(const void *pdata, void *phash)
+
+#include "cpuminer-config.h"
+#include "miner.h"
+
+#include "yespower-1.0.1/yespower.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <inttypes.h>
+
+int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done)
 {
-    /* Cache the yespower parameters so they are only initialized once.
-     * In a real miner these parameters should be set to the network’s values.
-     */
-    static int params_initialized = 0;
-    static yespower_params_t params;
-    if (!params_initialized) {
-        /* 
-         * Initialize the parameters.
-         * For example, if your network requires version YESPOWER_0_5,
-         * you might set:
-         *
-         *   params.version = YESPOWER_0_5;
-         *   params.N = 2048;
-         *   params.r = 32;
-         *
-         * (Replace the following with the proper initialization.)
-         */
-        memset(&params, 0, sizeof(params));  // Dummy initialization; update as needed
-        params_initialized = 1;
+    static const yespower_params_t params = {
+        .version = YESPOWER_1_0,
+        .N = 2048,
+        .r = 32,
+        .pers = (const uint8_t *)"UraniumX",
+        .perslen = 8
+    };
+
+    union {
+        uint8_t u8[80];
+        uint32_t u32[20];
+    } data __attribute__((aligned(64)));
+
+    union {
+        yespower_binary_t yb;
+        uint32_t u32[8];
+    } hash __attribute__((aligned(64)));
+
+    uint32_t n = pdata[19] - 1;
+    const uint32_t Htarg = ptarget[7];
+    int i;
+
+    // Precompute the first 19 elements of data
+    for (i = 0; i < 19; i++) {
+        be32enc(&data.u32[i], pdata[i]);
     }
 
-    /* Copy the 80-byte input block header into a local buffer.
-     * Use SSE2-based loads if the data is 16-byte aligned.
-     */
-    uint8_t data[80];
-#ifdef __SSE2__
-    if (((uintptr_t)pdata & 0x0F) == 0) {  // check 16-byte alignment
-        /* Since 80 bytes = 5 * 16, load using five __m128i loads */
-        __m128i *dest = (__m128i *)data;
-        const __m128i *src = (const __m128i *)pdata;
-        dest[0] = _mm_load_si128(&src[0]);
-        dest[1] = _mm_load_si128(&src[1]);
-        dest[2] = _mm_load_si128(&src[2]);
-        dest[3] = _mm_load_si128(&src[3]);
-        dest[4] = _mm_load_si128(&src[4]);
-    } else {
-        memcpy(data, pdata, 80);
-    }
-#else
-    memcpy(data, pdata, 80);
-#endif
+    do {
+        be32enc(&data.u32[19], ++n);
 
-    /* 
-     * Call the yespower hash function.
-     * The fourth parameter is cast to (uint8_t *) to match the expected type.
-     */
-    return yespower_tls(data, 80, &params, (uint8_t *)phash);
+        if (yespower_tls(data.u8, sizeof(data.u8), &params, &hash.yb))
+            abort();
+
+        if (le32dec(&hash.u32[7]) <= Htarg) {
+            for (i = 0; i < 7; i++)
+                hash.u32[i] = le32dec(&hash.u32[i]);
+            if (fulltest(hash.u32, ptarget)) {
+                *hashes_done = n - pdata[19] + 1;
+                pdata[19] = n;
+                return 1;
+            }
+        }
+    } while (n < max_nonce && !work_restart[thr_id].restart);
+
+    *hashes_done = n - pdata[19] + 1;
+    pdata[19] = n;
+    return 0;
 }
