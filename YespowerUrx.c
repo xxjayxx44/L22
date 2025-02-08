@@ -8,7 +8,7 @@
  *
  *  1. The yespower parameters are initialized once and reused.
  *  2. When possible, the 80 bytes are copied using SSE2 16‐byte loads
- *     (if the input is 16-byte aligned), which is faster than memcpy.
+ *     (if the input is 16‐byte aligned), which is faster than memcpy.
  *
  * These changes can yield a 50–120% speedup in the hashing inner loop
  * while still producing valid yespower hashes.
@@ -16,7 +16,7 @@
 
 #include <stdint.h>
 #include <string.h>
-#include "yespower-1.0.1/yespower.h"  // Ensure that this header is the official yespower header
+#include "yespower-1.0.1/yespower.h"  // Use the official yespower header
 
 #ifdef __SSE2__
 #include <emmintrin.h>
@@ -79,8 +79,8 @@ int yespowerurx_opt(const void *pdata, void *phash)
 
     /* 
      * Call the yespower hash function.
-     * The function yespower_tls() is expected to produce a valid hash
-     * given the input block and parameters.
+     * We cast phash to a pointer to an array of 32 bytes to match the expected
+     * function prototype.
      */
-    return yespower_tls(data, 80, &params, (uint8_t *)phash);
+    return yespower_tls(data, 80, &params, (uint8_t (*)[32])phash);
 }
