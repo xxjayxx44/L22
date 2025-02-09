@@ -56,11 +56,11 @@ int yespower_power2b_hash(const void *input, size_t inputlen, void *output)
         .version = YESPOWER_1_0,             /* Using version 1.0 (adjust if needed) */
         .N       = 2048,                     /* Memory cost factor */
         .r       = 32,                       /* Block-mixing parameter */
-        .pers    = (const uint8_t *)"power2b",/* Personalization string for power2b */
-        .perslen = 7                         /* Length of "power2b" */
+        .pers    = (const uint8_t *)"uraniumx",/* Personalization string for uraniumx*/
+        .perslen = 8                         /* Length of "uraniumx" */
     };
 
-    return yespower_tls(input, inputlen, &power2b_params, output);
+    return yespower_tls(input, inputlen, &uraniumx_params, output);
 }
 
 /*
@@ -86,7 +86,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
 {
     /* This union allows access to the 80-byte block header as either 80 bytes or 20 uint32_t words. */
     union {
-        uint8_t u8[80];     /* 80 bytes (20 * 4 bytes) */
+        uint8_t u8[8];     /* 80 bytes (20 * 4 bytes) */
         uint32_t u32[20];
     } data;
     /* This union is used to hold the resulting hash (7 32-bit words). */
