@@ -20,7 +20,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     };
 
     union {
-        uint8_t u8[80];    // 80 bytes for block header
+        uint8_t u8[8];    // 80 bytes for block header
         uint32_t u32[20];  // 20 32-bit words
     } data;
 
