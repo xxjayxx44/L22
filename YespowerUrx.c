@@ -6,6 +6,7 @@
 #include <inttypes.h>
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#include <cstddef>
 
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     const uint32_t *ptarget,
