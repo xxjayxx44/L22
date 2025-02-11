@@ -27,9 +27,6 @@
 #include <string.h>
 #include <time.h>
 
-// Include the Yespower header. This file should declare the function:
-//     int yespower_hash(const void *input, size_t inputlen, void *output);
-#include "yespower.h"
 
 // Default target difficulty (example value)
 #define DEFAULT_DIFFICULTY_TARGET 0x00000fffffffffffffULL
