@@ -1,8 +1,8 @@
 /*
  * miner_optimized.c
  *
- * This file implements a multi-threaded miner that uses randomization
- * for nonce selection and the Yespower "Urx" hashing algorithm.
+ * This file implements a multi-threaded miner using random nonce selection
+ * and the Yespower "Urx" hashing algorithm.
  *
  * IMPORTANT:
  *   - Compile ONLY this file along with YespowerUrx.c.
@@ -20,6 +20,18 @@
 #include <pthread.h>
 #include <unistd.h>   // for sysconf()
 
+// Include your Yespower header (adjust the filename if necessary)
+#include "yespower.h"  // Ensure this declares scanhash_urx_yespower (or similar)
+
+//---------------------------------------------------------------------
+// Wrapper: Map yespower_hash() to the actual function implementation.
+// If your Yespower implementation is defined as scanhash_urx_yespower,
+// uncomment and use the wrapper below.
+
+extern int scanhash_urx_yespower(const void *input, size_t inputlen, void *output);
+int yespower_hash(const void *input, size_t inputlen, void *output) {
+    return scanhash_urx_yespower(input, inputlen, output);
+}
 
 //---------------------------------------------------------------------
 // Global parameters and shared data
@@ -40,8 +52,8 @@ typedef struct {
 result_t result;
 
 //---------------------------------------------------------------------
-// Helper function: convert the first 8 bytes of hash into a uint64_t.
-// (Assumes little-endian. Adjust if necessary.)
+// Helper function: Convert the first 8 bytes of hash into a uint64_t.
+// (Assumes little-endian; adjust if necessary.)
 static inline uint64_t convert_hash_to_uint64(const uint8_t *hash) {
     uint64_t value = 0;
     for (int i = 0; i < 8; i++) {
@@ -55,16 +67,6 @@ int is_valid_hash(const uint8_t *hash) {
     uint64_t hash_val = convert_hash_to_uint64(hash);
     return (hash_val < DIFFICULTY_TARGET);
 }
-
-//---------------------------------------------------------------------
-// (Optional) Wrapper function if your Yespower implementation uses a different name.
-// Uncomment the wrapper below if your repository defines scanhash_urx_yespower().
-// Otherwise, adjust your code to call the proper function name directly.
-/*
-int yespower_hash(const void *input, size_t inputlen, void *output) {
-    return scanhash_urx_yespower(input, inputlen, output);
-}
-*/
 
 //---------------------------------------------------------------------
 // Worker thread function
@@ -85,14 +87,13 @@ void *mine_thread(void *arg) {
 
     // Mining loop: try random nonces until a valid hash is found.
     while (!found) {
-        // Generate a random 32-bit nonce (using the thread-safe rand_r).
+        // Generate a random 32-bit nonce using the thread-safe rand_r.
         uint32_t nonce = (uint32_t) rand_r(&seed);
 
         // Insert the nonce into the input buffer.
         memcpy(input + nonce_offset, &nonce, sizeof(nonce));
 
         // Compute the hash using the Yespower algorithm.
-        // Replace "yespower_hash" with the proper function name if needed.
         if (yespower_hash(input, sizeof(input), hash) != 0) {
             // If an error occurs in hash computation, skip this nonce.
             continue;
@@ -101,7 +102,7 @@ void *mine_thread(void *arg) {
         // Check if the computed hash meets the difficulty target.
         if (is_valid_hash(hash)) {
             pthread_mutex_lock(&found_mutex);
-            if (!found) {  // Double-check in the critical section.
+            if (!found) {  // Double-check inside the critical section.
                 found = 1;
                 result.nonce = nonce;
                 memcpy(result.hash, hash, sizeof(result.hash));
