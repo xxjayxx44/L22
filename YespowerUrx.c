@@ -1,109 +1,125 @@
 /*
- * miner.c
+ * Copyright 2011 ArtForz, 2011-2014 pooler, 2018 The Resistance developers,
+ * 2020 The Sugarchain Yumekawa developers
+ * All rights reserved.
  *
- * This file implements a simple miner that uses the Yespower "Urx" hashing
- * algorithm to solve a proof-of-work puzzle by randomizing the nonce.
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *   1. Redistributions of source code must retain the above copyright
+ *      notice, this list of conditions and the following disclaimer.
+ *   2. Redistributions in binary form must reproduce the above copyright
+ *      notice, this list of conditions and the following disclaimer in the
+ *      documentation and/or other materials provided with the distribution.
  *
- * The miner uses an 80-byte input (e.g. a block header) and inserts a
- * random 32-bit nonce at a specified offset. The resulting hash is computed
- * using Yespower (provided by YespowerUrx.c) and compared against a target
- * difficulty.
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
  *
- * The target difficulty can be adjusted to match the pool you'll connect to.
- * You can provide the target difficulty as a command-line argument, either
- * in hexadecimal (prefix with "0x") or as a decimal number.
+ * This file is loosely based on a tiny portion of pooler's cpuminer scrypt.c.
  *
- * Compile on Ubuntu with:
- *     gcc -O2 miner.c YespowerUrx.c -o miner
- *
- * Usage:
- *     ./miner [difficulty_target]
- *   - If no target is provided, a default is used.
+ * Modified to use randomization for nonce selection.
  */
 
-#include <stdio.h>
+#include "cpuminer-config.h"
+#include "miner.h"
+
+#include "yespower-1.0.1/yespower.h"
+
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
-#include <time.h>
+#include <inttypes.h>
 
+/*
+ * scanhash_urx_yespower
+ *
+ * Modified to select the nonce randomly rather than sequentially.
+ *
+ * Parameters:
+ *   thr_id      - thread id (used to index work_restart[] for restart requests)
+ *   pdata       - pointer to an array of 32-bit words representing the block header;
+ *                 pdata[19] holds the nonce field.
+ *   ptarget     - pointer to an array containing the target (the 8th word, index 7, is used for a quick test)
+ *   max_nonce   - maximum number of hash attempts (iterations) to perform
+ *   hashes_done - pointer to a counter that will be updated with the number of hashes attempted
+ *
+ * Returns 1 if a valid hash (meeting the full target) is found, 0 otherwise.
+ */
+int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
+	const uint32_t *ptarget,
+	uint32_t max_nonce, unsigned long *hashes_done)
+{
+	static const yespower_params_t params = {
+		.version = YESPOWER_1_0,
+		.N = 2048,
+		.r = 32,
+		.pers = (const uint8_t *)"UraniumX",
+		.perslen = 8
+	};
+	/* The union 'data' holds the 80-byte input block.
+	 * Although one member is declared as an 8-byte array, the union’s size is that of the largest member,
+	 * which is u32[20] (20 * 4 = 80 bytes). */
+	union {
+		uint8_t u8[8];
+		uint32_t u32[20];
+	} data;
+	union {
+		yespower_binary_t yb;
+		uint32_t u32[7];
+	} hash;
+	unsigned long iterations = 0;
+	uint32_t nonce = 0;
+	const uint32_t Htarg = ptarget[7];
+	int i;
 
-// Default target difficulty (example value)
-#define DEFAULT_DIFFICULTY_TARGET 0x00000fffffffffffffULL
+	/* Copy the first 19 words of the block header from pdata into data.
+	 * These words remain constant during hashing (only the 20th word, the nonce, will change). */
+	for (i = 0; i < 19; i++)
+		be32enc(&data.u32[i], pdata[i]);
 
-// Helper function: Convert the first 8 bytes of the hash into a uint64_t value.
-// This function assumes the hash is in little-endian order.
-static inline uint64_t convert_hash_to_uint64(const uint8_t *hash) {
-    uint64_t value = 0;
-    for (int i = 0; i < 8; i++) {
-        value |= ((uint64_t)hash[i]) << (8 * i);
-    }
-    return value;
-}
+	/* Instead of incrementing the nonce sequentially, we now randomize it.
+	 * We perform at most 'max_nonce' iterations (each counts as one hash attempt)
+	 * and we also check for a work restart request. */
+	while (iterations < max_nonce && !work_restart[thr_id].restart) {
+		/* Generate a random nonce value. */
+		nonce = (uint32_t)rand();
 
-// Checks if the computed hash meets the target difficulty.
-// A valid hash is one whose (numerical) value is less than the target.
-int is_valid_hash(const uint8_t *hash, uint64_t target) {
-    uint64_t hash_val = convert_hash_to_uint64(hash);
-    return (hash_val < target);
-}
+		/* Encode the random nonce into the 20th word of the block header. */
+		be32enc(&data.u32[19], nonce);
 
-int main(int argc, char *argv[]) {
-    // Determine the difficulty target.
-    // If a command-line parameter is provided, parse it.
-    // The parameter can be in hexadecimal (if it starts with "0x") or decimal.
-    uint64_t difficulty_target = DEFAULT_DIFFICULTY_TARGET;
-    if (argc > 1) {
-        if (strncmp(argv[1], "0x", 2) == 0) {
-            difficulty_target = strtoull(argv[1], NULL, 16);
-        } else {
-            difficulty_target = strtoull(argv[1], NULL, 10);
-        }
-        printf("Using provided difficulty target: 0x%016llx\n", (unsigned long long)difficulty_target);
-    } else {
-        printf("Using default difficulty target: 0x%016llx\n", (unsigned long long)difficulty_target);
-    }
+		iterations++;
 
-    // Prepare the input buffer.
-    // For example, this might be an 80-byte block header.
-    uint8_t input[80];
-    memset(input, 0, sizeof(input));
+		/* Compute the Yespower hash using the provided parameters.
+		 * The input is 80 bytes (the full block header) stored in data.u8. */
+		if (yespower_tls(data.u8, 80, &params, &hash.yb))
+			abort();
 
-    // Define the offset in the input buffer where the nonce will be inserted.
-    // Adjust this offset according to your protocol's specification.
-    const size_t nonce_offset = 72;  // (Example: nonce inserted at offset 72)
+		/* Quick test: check if one 32-bit word of the hash (word at index 7) meets the target.
+		 * The value is decoded from little-endian format. */
+		if (le32dec(&hash.u32[7]) <= Htarg) {
+			/* Decode all 7 32-bit words of the hash from little-endian format. */
+			for (i = 0; i < 7; i++)
+				hash.u32[i] = le32dec(&hash.u32[i]);
+			/* Perform the full target test.
+			 * Only if fulltest returns true do we consider the hash valid. */
+			if (fulltest(hash.u32, ptarget)) {
+				*hashes_done = iterations;
+				pdata[19] = nonce;
+				return 1;
+			}
+		}
+	}
 
-    // Buffer to store the resulting 32-byte hash.
-    uint8_t hash[32];
-
-    // Seed the random number generator.
-    srand((unsigned)time(NULL));
-
-    // Mining loop: continuously try random nonces until a valid hash is found.
-    for (;;) {
-        // Generate a random 32-bit nonce.
-        uint32_t nonce = (uint32_t)rand();
-
-        // Insert the nonce into the input buffer at the specified offset.
-        memcpy(input + nonce_offset, &nonce, sizeof(nonce));
-
-        // Compute the Yespower hash.
-        // The function yespower_hash is expected to be defined in YespowerUrx.c.
-        if (yespower_hash(input, sizeof(input), hash) != 0) {
-            fprintf(stderr, "Error computing Yespower hash.\n");
-            continue;
-        }
-
-        // Validate the computed hash against the current target difficulty.
-        if (is_valid_hash(hash, difficulty_target)) {
-            printf("Valid hash found!\nNonce: %u\nHash: ", nonce);
-            for (int i = 0; i < 32; i++) {
-                printf("%02x", hash[i]);
-            }
-            printf("\n");
-            break;
-        }
-    }
-
-    return 0;
+	*hashes_done = iterations;
+	/* Store the last nonce tried back into the block header. */
+	pdata[19] = nonce;
+	return 0;
 }
