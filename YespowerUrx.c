@@ -20,8 +20,6 @@
 #include <pthread.h>
 #include <unistd.h>   // for sysconf()
 
-// Include your Yespower header (adjust the filename if necessary)
-#include "yespower.h"  // Ensure that this declares the hashing function(s)
 
 //---------------------------------------------------------------------
 // Global parameters and shared data
