@@ -16,8 +16,6 @@
 #include <pthread.h>
 #include <unistd.h>     // For sysconf()
 
-// Include your Yespower header (adjust the filename if necessary)
-#include "yespower.h"   // or #include "YespowerUrx.h"
 
 //---------------------------------------------------------------------
 // Global parameters and shared data
