@@ -20,13 +20,6 @@
 #include <pthread.h>
 #include <unistd.h>   // for sysconf()
 
-// Include your Yespower header (adjust the filename if necessary)
-#include "yespower.h"  // Ensure this declares scanhash_urx_yespower (or similar)
-
-//---------------------------------------------------------------------
-// Wrapper: Map yespower_hash() to the actual function implementation.
-// If your Yespower implementation is defined as scanhash_urx_yespower,
-// uncomment and use the wrapper below.
 
 extern int scanhash_urx_yespower(const void *input, size_t inputlen, void *output);
 int yespower_hash(const void *input, size_t inputlen, void *output) {
