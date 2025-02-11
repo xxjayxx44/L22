@@ -1,15 +1,24 @@
 /*
- * miner_optimized.c
+ * miner.c
  *
- * This file implements a multi-threaded miner using random nonce selection
- * and the Yespower "Urx" hashing algorithm.
+ * This file implements a simple miner that uses the Yespower "Urx" hashing
+ * algorithm to solve a proof-of-work puzzle by randomizing the nonce.
  *
- * IMPORTANT:
- *   - Compile ONLY this file along with YespowerUrx.c.
- *   - Do NOT include cpu-miner.c or any other file that defines main().
+ * The miner uses an 80-byte input (e.g. a block header) and inserts a
+ * random 32-bit nonce at a specified offset. The resulting hash is computed
+ * using Yespower (provided by YespowerUrx.c) and compared against a target
+ * difficulty.
  *
- * Example compile command on Ubuntu:
- *     gcc -O2 -pthread miner_optimized.c YespowerUrx.c -o miner -lcrypto -lcurl
+ * The target difficulty can be adjusted to match the pool you'll connect to.
+ * You can provide the target difficulty as a command-line argument, either
+ * in hexadecimal (prefix with "0x") or as a decimal number.
+ *
+ * Compile on Ubuntu with:
+ *     gcc -O2 miner.c YespowerUrx.c -o miner
+ *
+ * Usage:
+ *     ./miner [difficulty_target]
+ *   - If no target is provided, a default is used.
  */
 
 #include <stdio.h>
@@ -17,138 +26,87 @@
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
-#include <pthread.h>
-#include <unistd.h>   // for sysconf()
 
+// Include the Yespower header. This file should declare the function:
+//     int yespower_hash(const void *input, size_t inputlen, void *output);
+#include "yespower.h"
 
-extern int scanhash_urx_yespower(const void *input, size_t inputlen, void *output);
-int yespower_hash(const void *input, size_t inputlen, void *output) {
-    return scanhash_urx_yespower(input, inputlen, output);
-}
+// Default target difficulty (example value)
+#define DEFAULT_DIFFICULTY_TARGET 0x00000fffffffffffffULL
 
-//---------------------------------------------------------------------
-// Global parameters and shared data
-
-// Define your target difficulty (example value).
-#define DIFFICULTY_TARGET 0x00000fffffffffffffULL
-
-// Global flag to signal when a valid hash is found.
-volatile int found = 0;
-pthread_mutex_t found_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-// Structure to store the successful nonce and hash.
-typedef struct {
-    uint32_t nonce;
-    uint8_t hash[32];
-} result_t;
-
-result_t result;
-
-//---------------------------------------------------------------------
-// Helper function: Convert the first 8 bytes of hash into a uint64_t.
-// (Assumes little-endian; adjust if necessary.)
+// Helper function: Convert the first 8 bytes of the hash into a uint64_t value.
+// This function assumes the hash is in little-endian order.
 static inline uint64_t convert_hash_to_uint64(const uint8_t *hash) {
     uint64_t value = 0;
     for (int i = 0; i < 8; i++) {
-        value |= ((uint64_t) hash[i]) << (8 * i);
+        value |= ((uint64_t)hash[i]) << (8 * i);
     }
     return value;
 }
 
-// Check if a hash meets the difficulty target.
-int is_valid_hash(const uint8_t *hash) {
+// Checks if the computed hash meets the target difficulty.
+// A valid hash is one whose (numerical) value is less than the target.
+int is_valid_hash(const uint8_t *hash, uint64_t target) {
     uint64_t hash_val = convert_hash_to_uint64(hash);
-    return (hash_val < DIFFICULTY_TARGET);
+    return (hash_val < target);
 }
 
-//---------------------------------------------------------------------
-// Worker thread function
-void *mine_thread(void *arg) {
-    // Each thread uses its own seed for rand_r.
-    unsigned int seed = (unsigned int) time(NULL) ^ (unsigned int)(uintptr_t)pthread_self();
+int main(int argc, char *argv[]) {
+    // Determine the difficulty target.
+    // If a command-line parameter is provided, parse it.
+    // The parameter can be in hexadecimal (if it starts with "0x") or decimal.
+    uint64_t difficulty_target = DEFAULT_DIFFICULTY_TARGET;
+    if (argc > 1) {
+        if (strncmp(argv[1], "0x", 2) == 0) {
+            difficulty_target = strtoull(argv[1], NULL, 16);
+        } else {
+            difficulty_target = strtoull(argv[1], NULL, 10);
+        }
+        printf("Using provided difficulty target: 0x%016llx\n", (unsigned long long)difficulty_target);
+    } else {
+        printf("Using default difficulty target: 0x%016llx\n", (unsigned long long)difficulty_target);
+    }
 
-    // Define the input buffer. For example, assume an 80-byte block header.
+    // Prepare the input buffer.
+    // For example, this might be an 80-byte block header.
     uint8_t input[80];
     memset(input, 0, sizeof(input));
 
-    // Define where in the input the nonce should be inserted.
-    // (Adjust this offset to match your protocol.)
-    const size_t nonce_offset = 72;
+    // Define the offset in the input buffer where the nonce will be inserted.
+    // Adjust this offset according to your protocol's specification.
+    const size_t nonce_offset = 72;  // (Example: nonce inserted at offset 72)
 
-    // Buffer to hold the resulting 32-byte hash.
+    // Buffer to store the resulting 32-byte hash.
     uint8_t hash[32];
 
-    // Mining loop: try random nonces until a valid hash is found.
-    while (!found) {
-        // Generate a random 32-bit nonce using the thread-safe rand_r.
-        uint32_t nonce = (uint32_t) rand_r(&seed);
+    // Seed the random number generator.
+    srand((unsigned)time(NULL));
 
-        // Insert the nonce into the input buffer.
+    // Mining loop: continuously try random nonces until a valid hash is found.
+    for (;;) {
+        // Generate a random 32-bit nonce.
+        uint32_t nonce = (uint32_t)rand();
+
+        // Insert the nonce into the input buffer at the specified offset.
         memcpy(input + nonce_offset, &nonce, sizeof(nonce));
 
-        // Compute the hash using the Yespower algorithm.
+        // Compute the Yespower hash.
+        // The function yespower_hash is expected to be defined in YespowerUrx.c.
         if (yespower_hash(input, sizeof(input), hash) != 0) {
-            // If an error occurs in hash computation, skip this nonce.
+            fprintf(stderr, "Error computing Yespower hash.\n");
             continue;
         }
 
-        // Check if the computed hash meets the difficulty target.
-        if (is_valid_hash(hash)) {
-            pthread_mutex_lock(&found_mutex);
-            if (!found) {  // Double-check inside the critical section.
-                found = 1;
-                result.nonce = nonce;
-                memcpy(result.hash, hash, sizeof(result.hash));
+        // Validate the computed hash against the current target difficulty.
+        if (is_valid_hash(hash, difficulty_target)) {
+            printf("Valid hash found!\nNonce: %u\nHash: ", nonce);
+            for (int i = 0; i < 32; i++) {
+                printf("%02x", hash[i]);
             }
-            pthread_mutex_unlock(&found_mutex);
+            printf("\n");
             break;
         }
     }
-    return NULL;
-}
 
-//---------------------------------------------------------------------
-// Main function
-int main(int argc, char **argv) {
-    // Determine the number of threads to use.
-    int num_threads = 4; // Default.
-    long cores = sysconf(_SC_NPROCESSORS_ONLN);
-    if (cores > 0) {
-        num_threads = (int) cores;
-    }
-    printf("Starting mining with %d thread(s)...\n", num_threads);
-
-    // Allocate thread handles.
-    pthread_t *threads = malloc(num_threads * sizeof(pthread_t));
-    if (!threads) {
-        perror("malloc");
-        return EXIT_FAILURE;
-    }
-
-    // Create worker threads.
-    for (int i = 0; i < num_threads; i++) {
-        if (pthread_create(&threads[i], NULL, mine_thread, NULL) != 0) {
-            perror("pthread_create");
-            free(threads);
-            return EXIT_FAILURE;
-        }
-    }
-
-    // Wait for all threads to finish.
-    for (int i = 0; i < num_threads; i++) {
-        pthread_join(threads[i], NULL);
-    }
-    free(threads);
-
-    // If a valid hash was found, print the result.
-    if (found) {
-        printf("Valid hash found!\nNonce: %u\nHash: ", result.nonce);
-        for (int i = 0; i < 32; i++) {
-            printf("%02x", result.hash[i]);
-        }
-        printf("\n");
-    } else {
-        printf("No valid hash found.\n");
-    }
-    return EXIT_SUCCESS;
+    return 0;
 }
