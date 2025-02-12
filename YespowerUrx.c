@@ -37,27 +37,33 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     uint32_t found_nonce = 0;
     int found = 0;
 
-    #pragma omp parallel for shared(found, found_nonce)
-    for (uint32_t nonce = n + 1; nonce < max_nonce; nonce++) {
-        if (found) continue;
+    #pragma omp parallel shared(found, found_nonce)
+    {
+        uint32_t local_nonce;
+        while (!found) {
+            #pragma omp atomic capture
+            local_nonce = n++;
 
-        uint32_t local_data[32];
-        memcpy(local_data, data.u32, sizeof(local_data));
-        be32enc(&local_data[19], nonce);
+            if (local_nonce >= max_nonce) break;
 
-        if (yespower_tls(data.u8, 80, &params, &hash.yb))
-			abort();
+            uint32_t local_data[19];
+            memcpy(local_data, data.u32, sizeof(local_data));
+            be32enc(&local_data[19], local_nonce);
 
-        if (le32dec(&hash.u32[7]) <= Htarg) {
-            for (i = 0; i < 7; i++)
-                hash.u32[i] = le32dec(&hash.u32[i]);
+            if (yespower_tls(data.u8, 80, &params, &hash.yb))
+                abort();
 
-            if (fulltest(hash.u32, ptarget)) {
-                #pragma omp critical
-                {
-                    if (!found) {
-                        found = 1;
-                        found_nonce = nonce;
+            if (le32dec(&hash.u32[7]) <= Htarg) {
+                for (i = 0; i < 7; i++)
+                    hash.u32[i] = le32dec(&hash.u32[i]);
+
+                if (fulltest(hash.u32, ptarget)) {
+                    #pragma omp critical
+                    {
+                        if (!found) {
+                            found = 1;
+                            found_nonce = local_nonce;
+                        }
                     }
                 }
             }
