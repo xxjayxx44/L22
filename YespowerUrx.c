@@ -41,12 +41,12 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     for (uint32_t nonce = n + 1; nonce < max_nonce; nonce++) {
         if (found) continue;
 
-        uint32_t local_data[20];
+        uint32_t local_data[32];
         memcpy(local_data, data.u32, sizeof(local_data));
         be32enc(&local_data[19], nonce);
 
-        if (yespower_tls((uint8_t*)local_data, 80, &params, &hash.yb))
-            continue;
+        if (yespower_tls(data.u8, 80, &params, &hash.yb))
+			abort();
 
         if (le32dec(&hash.u32[7]) <= Htarg) {
             for (i = 0; i < 7; i++)
