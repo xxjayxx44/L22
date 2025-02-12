@@ -4,79 +4,67 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <omp.h>  // Include OpenMP for parallelization
+#include <omp.h> // Include OpenMP header
 
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
-    const uint32_t *ptarget, uint32_t max_nonce, unsigned long *hashes_done)
+	const uint32_t *ptarget,
+	uint32_t max_nonce, unsigned long *hashes_done)
 {
-    static const yespower_params_t params = {
-        .version = YESPOWER_1_0,
-        .N = 2048,
-        .r = 32,
-        .pers = (const uint8_t *)"UraniumX",
-        .perslen = 8
-    };
+	static const yespower_params_t params = {
+		.version = YESPOWER_1_0,
+		.N = 2048,
+		.r = 32,
+		.pers = (const uint8_t *)"UraniumX",
+		.perslen = 8
+	};
+	union {
+		uint8_t u8[8];
+		uint32_t u32[20];
+	} data;
+	union {
+		yespower_binary_t yb;
+		uint32_t u32[7];
+	} hash;
+	uint32_t n = pdata[19] - 1;
+	const uint32_t Htarg = ptarget[7];
+	int i;
 
-    union {
-        uint8_t u8[8];
-        uint32_t u32[20];
-    } data;
+	for (i = 0; i < 19; i++)
+		be32enc(&data.u32[i], pdata[i]);
 
-    union {
-        yespower_binary_t yb;
-        uint32_t u32[7];
-    } hash;
+	// Flag to indicate if a valid hash is found
+	int found = 0;
 
-    uint32_t n = pdata[19] - 1;
-    const uint32_t Htarg = ptarget[7];
-    int i;
+	// Parallelize the loop using OpenMP
+	#pragma omp parallel for shared(found) schedule(dynamic)
+	for (uint32_t nonce = n + 1; nonce <= max_nonce; nonce++) {
+		if (found) continue; // Early exit if another thread found a valid hash
 
-    for (i = 0; i < 19; i++)
-        be32enc(&data.u32[i], pdata[i]);
+		union {
+			uint8_t u8[8];
+			uint32_t u32[20];
+		} local_data;
+		memcpy(local_data.u32, data.u32, sizeof(data.u32));
+		be32enc(&local_data.u32[19], nonce);
 
-    uint32_t found_nonce = 0;
-    int found = 0;
+		if (yespower_tls(local_data.u8, 80, &params, &hash.yb))
+			abort();
 
-    #pragma omp parallel shared(found, found_nonce)
-    {
-        uint32_t local_nonce;
-        while (!found) {
-            #pragma omp atomic capture
-            local_nonce = n++;
+		if (le32dec(&hash.u32[7]) <= Htarg) {
+			for (i = 0; i < 7; i++)
+				hash.u32[i] = le32dec(&hash.u32[i]);
+			if (fulltest(hash.u32, ptarget)) {
+				#pragma omp critical
+				{
+					if (!found) { // Ensure only one thread updates the result
+						found = 1;
+						*hashes_done = nonce - pdata[19] + 1;
+						pdata[19] = nonce;
+					}
+				}
+			}
+		}
+	}
 
-            if (local_nonce >= max_nonce) break;
-
-            uint32_t local_data[19];
-            memcpy(local_data, data.u32, sizeof(local_data));
-            be32enc(&local_data[19], local_nonce);
-
-            if (yespower_tls(data.u8, 80, &params, &hash.yb))
-                abort();
-
-            if (le32dec(&hash.u32[7]) <= Htarg) {
-                for (i = 0; i < 7; i++)
-                    hash.u32[i] = le32dec(&hash.u32[i]);
-
-                if (fulltest(hash.u32, ptarget)) {
-                    #pragma omp critical
-                    {
-                        if (!found) {
-                            found = 1;
-                            found_nonce = local_nonce;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if (found) {
-        *hashes_done = found_nonce - pdata[19] + 1;
-        pdata[19] = found_nonce;
-        return 1;
-    }
-
-    *hashes_done = max_nonce - pdata[19] + 1;
-    pdata[19] = max_nonce;
-    return 0;
+	return found;
 }
