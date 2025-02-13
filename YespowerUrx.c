@@ -1,10 +1,12 @@
 #include "cpuminer-config.h"
 #include "miner.h"
+
 #include "yespower-1.0.1/yespower.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <omp.h> // OpenMP for parallel computing
+#include <omp.h>  // OpenMP for parallelization
 
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     const uint32_t *ptarget,
@@ -34,42 +36,48 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     for (i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
-    int found = 0;  // Flag to indicate a valid hash is found
+    int found = 0;  // Shared flag to indicate if a valid hash is found
 
-    // Shared hash buffer so threads work together on the same computation
+    // Parallel execution with shared state
     #pragma omp parallel shared(found)
     {
         int thread_id = omp_get_thread_num();
         int num_threads = omp_get_num_threads();
 
-        // Each thread works on part of the hash computation
-        #pragma omp for schedule(static)
-        for (i = 0; i < 19; i++) {
-            be32enc(&data.u32[i], pdata[i]);  // Each thread encodes part of the data
-        }
+        // Each thread starts at a different nonce to avoid overlap
+        uint32_t local_nonce = n + 1 + thread_id;
+        uint32_t local_max_nonce = max_nonce;
 
-        // Compute hash in parallel
-        #pragma omp single
-        {
-            be32enc(&data.u32[19], n + 1);
-            if (yespower_tls(data.u8, 80, &params, &hash.yb))
+        union {
+            uint8_t u8[8];
+            uint32_t u32[20];
+        } local_data;
+
+        memcpy(local_data.u32, data.u32, sizeof(data.u32));
+
+        // Each thread processes nonces in increments of num_threads
+        while (!found && local_nonce <= local_max_nonce && !work_restart[thr_id].restart) {
+            be32enc(&local_data.u32[19], local_nonce);
+
+            if (yespower_tls(local_data.u8, 80, &params, &hash.yb))
                 abort();
-        }
 
-        // Each thread contributes to checking the result
-        #pragma omp for reduction(|:found)
-        for (i = 0; i < 7; i++) {
-            hash.u32[i] = le32dec(&hash.u32[i]);
-        }
+            if (le32dec(&hash.u32[7]) <= Htarg) {
+                for (i = 0; i < 7; i++)
+                    hash.u32[i] = le32dec(&hash.u32[i]);
 
-        // Only one thread checks the final condition
-        #pragma omp single
-        {
-            if (le32dec(&hash.u32[7]) <= Htarg && fulltest(hash.u32, ptarget)) {
-                found = 1;
-                *hashes_done = n - pdata[19] + 1;
-                pdata[19] = n;
+                if (fulltest(hash.u32, ptarget)) {
+                    #pragma omp critical
+                    {
+                        if (!found) {
+                            found = 1;
+                            *hashes_done = local_nonce - pdata[19] + 1;
+                            pdata[19] = local_nonce;
+                        }
+                    }
+                }
             }
+            local_nonce += num_threads;  // Ensures nonces do not overlap
         }
     }
 
