@@ -1,17 +1,13 @@
 #include "cpuminer-config.h"
 #include "miner.h"
-
 #include "yespower-1.0.1/yespower.h"
-
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 #include <time.h>
 
-// Per-thread PRNG state for nonce randomization
-static __thread struct {
-    uint32_t seed;
-} rnd_state;
+// Thread-local random state for nonce randomization
+static __thread uint32_t rnd_state;
 
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     const uint32_t *ptarget,
@@ -27,7 +23,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     union {
         uint8_t u8[80];
         uint32_t u32[20];
-    } data; // Removed static for thread safety
+    } data;
     union {
         yespower_binary_t yb;
         uint32_t u32[7];
@@ -37,18 +33,17 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     uint32_t count = max_nonce - base_nonce + 1;
     int i;
 
-    // Initialize PRNG once per thread
-    if (rnd_state.seed == 0) {
-        rnd_state.seed = (uint32_t)(time(NULL)) ^ thr_id;
-        srand(rnd_state.seed);
+    // Initialize random state for this thread
+    if (rnd_state == 0) {
+        rnd_state = (uint32_t)(time(NULL)) ^ thr_id;
     }
 
     for (i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
     for (uint32_t attempt = 0; attempt < count; ++attempt) {
-        // Generate randomized nonce within valid range
-        uint32_t nonce = base_nonce + (rand_r(&rnd_state.seed) % count);
+        // Randomize nonce within valid range
+        uint32_t nonce = base_nonce + (rand_r(&rnd_state) % count);
         
         be32enc(&data.u32[19], nonce);
 
