@@ -18,6 +18,7 @@
 #  include <stdlib.h>
 # endif
 #endif
+
 #ifdef HAVE_ALLOCA_H
 # include <alloca.h>
 #elif !defined alloca
@@ -40,11 +41,11 @@ void *alloca (size_t);
 #include <syslog.h>
 #else
 enum {
-	LOG_ERR,
-	LOG_WARNING,
-	LOG_NOTICE,
-	LOG_INFO,
-	LOG_DEBUG,
+    LOG_ERR,
+    LOG_WARNING,
+    LOG_NOTICE,
+    LOG_INFO,
+    LOG_DEBUG,
 };
 #endif
 
@@ -52,10 +53,10 @@ enum {
 #undef likely
 #if defined(__GNUC__) && (__GNUC__ > 2) && defined(__OPTIMIZE__)
 #define unlikely(expr) (__builtin_expect(!!(expr), 0))
-#define likely(expr) (__builtin_expect(!!(expr), 1))
+#define likely(expr)   (__builtin_expect(!!(expr), 1))
 #else
 #define unlikely(expr) (expr)
-#define likely(expr) (expr)
+#define likely(expr)   (expr)
 #endif
 
 #ifndef ARRAY_SIZE
@@ -65,16 +66,18 @@ enum {
 #if ((__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3))
 #define WANT_BUILTIN_BSWAP
 #else
-#define bswap_32(x) ((((x) << 24) & 0xff000000u) | (((x) << 8) & 0x00ff0000u) \
-                   | (((x) >> 8) & 0x0000ff00u) | (((x) >> 24) & 0x000000ffu))
+#define bswap_32(x) ((((x) << 24) & 0xff000000u) | (((x) << 8)  & 0x00ff0000u) \
+                   | (((x) >> 8)  & 0x0000ff00u) | (((x) >> 24) & 0x000000ffu))
 #endif
 
-static inline uint32_t swab32(uint32_t v)
+// Use always_inline and pure where possible to help the compiler optimize.
+static inline __attribute__((always_inline, pure))
+uint32_t swab32(uint32_t v)
 {
 #ifdef WANT_BUILTIN_BSWAP
-	return __builtin_bswap32(v);
+    return __builtin_bswap32(v);
 #else
-	return bswap_32(v);
+    return bswap_32(v);
 #endif
 }
 
@@ -83,42 +86,50 @@ static inline uint32_t swab32(uint32_t v)
 #endif
 
 #if !HAVE_DECL_BE32DEC
-static inline uint32_t be32dec(const void *pp)
+static inline __attribute__((always_inline, pure))
+uint32_t be32dec(const void *restrict pp)
 {
-	const uint8_t *p = (uint8_t const *)pp;
-	return ((uint32_t)(p[3]) + ((uint32_t)(p[2]) << 8) +
-	    ((uint32_t)(p[1]) << 16) + ((uint32_t)(p[0]) << 24));
+    const uint8_t *p = (const uint8_t *)pp;
+    return ((uint32_t)p[3]       |
+            ((uint32_t)p[2] << 8)  |
+            ((uint32_t)p[1] << 16) |
+            ((uint32_t)p[0] << 24));
 }
 #endif
 
 #if !HAVE_DECL_LE32DEC
-static inline uint32_t le32dec(const void *pp)
+static inline __attribute__((always_inline, pure))
+uint32_t le32dec(const void *restrict pp)
 {
-	const uint8_t *p = (uint8_t const *)pp;
-	return ((uint32_t)(p[0]) + ((uint32_t)(p[1]) << 8) +
-	    ((uint32_t)(p[2]) << 16) + ((uint32_t)(p[3]) << 24));
+    const uint8_t *p = (const uint8_t *)pp;
+    return ((uint32_t)p[0]       |
+            ((uint32_t)p[1] << 8)  |
+            ((uint32_t)p[2] << 16) |
+            ((uint32_t)p[3] << 24));
 }
 #endif
 
 #if !HAVE_DECL_BE32ENC
-static inline void be32enc(void *pp, uint32_t x)
+static inline __attribute__((always_inline))
+void be32enc(void *restrict pp, uint32_t x)
 {
-	uint8_t *p = (uint8_t *)pp;
-	p[3] = x & 0xff;
-	p[2] = (x >> 8) & 0xff;
-	p[1] = (x >> 16) & 0xff;
-	p[0] = (x >> 24) & 0xff;
+    uint8_t *p = (uint8_t *)pp;
+    p[3] = (uint8_t)(x & 0xff);
+    p[2] = (uint8_t)((x >> 8) & 0xff);
+    p[1] = (uint8_t)((x >> 16) & 0xff);
+    p[0] = (uint8_t)((x >> 24) & 0xff);
 }
 #endif
 
 #if !HAVE_DECL_LE32ENC
-static inline void le32enc(void *pp, uint32_t x)
+static inline __attribute__((always_inline))
+void le32enc(void *restrict pp, uint32_t x)
 {
-	uint8_t *p = (uint8_t *)pp;
-	p[0] = x & 0xff;
-	p[1] = (x >> 8) & 0xff;
-	p[2] = (x >> 16) & 0xff;
-	p[3] = (x >> 24) & 0xff;
+    uint8_t *p = (uint8_t *)pp;
+    p[0] = (uint8_t)(x & 0xff);
+    p[1] = (uint8_t)((x >> 8) & 0xff);
+    p[2] = (uint8_t)((x >> 16) & 0xff);
+    p[3] = (uint8_t)((x >> 24) & 0xff);
 }
 #endif
 
@@ -137,50 +148,50 @@ void sha256_transform(uint32_t *state, const uint32_t *block, int swap);
 void sha256d(unsigned char *hash, const unsigned char *data, int len);
 
 extern int scanhash_tidecoin_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_sugar_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_iso_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_null_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_litb_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_iots_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_itc_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 extern int scanhash_ytn_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done);
+    const uint32_t *ptarget,
+    uint32_t max_nonce, unsigned long *hashes_done);
 
 struct thr_info {
-	int		id;
-	pthread_t	pth;
-	struct thread_q	*q;
+    int         id;
+    pthread_t   pth;
+    struct thread_q *q;
 };
 
 struct work_restart {
-	volatile unsigned long	restart;
-	char			padding[128 - sizeof(unsigned long)];
+    volatile unsigned long  restart;
+    char            padding[128 - sizeof(unsigned long)];
 };
 
 extern bool opt_debug;
@@ -203,12 +214,12 @@ extern int longpoll_thr_id;
 extern int stratum_thr_id;
 extern struct work_restart *work_restart;
 
-#define JSON_RPC_LONGPOLL	(1 << 0)
-#define JSON_RPC_QUIET_404	(1 << 1)
+#define JSON_RPC_LONGPOLL   (1 << 0)
+#define JSON_RPC_QUIET_404  (1 << 1)
 
 extern void applog(int prio, const char *fmt, ...);
 extern json_t *json_rpc_call(CURL *curl, const char *url, const char *userpass,
-	const char *rpc_req, int *curl_err, int flags);
+    const char *rpc_req, int *curl_err, int flags);
 void memrev(unsigned char *p, size_t len);
 extern void bin2hex(char *s, const unsigned char *p, size_t len);
 extern char *abin2hex(const unsigned char *p, size_t len);
@@ -216,44 +227,44 @@ extern bool hex2bin(unsigned char *p, const char *hexstr, size_t len);
 extern int varint_encode(unsigned char *p, uint64_t n);
 extern size_t address_to_script(unsigned char *out, size_t outsz, const char *addr);
 extern int timeval_subtract(struct timeval *result, struct timeval *x,
-	struct timeval *y);
+    struct timeval *y);
 extern bool fulltest(const uint32_t *hash, const uint32_t *target);
 extern void diff_to_target(uint32_t *target, double diff);
 
 struct stratum_job {
-	char *job_id;
-	unsigned char prevhash[32];
-	size_t coinbase_size;
-	unsigned char *coinbase;
-	unsigned char *xnonce2;
-	int merkle_count;
-	unsigned char **merkle;
-	unsigned char version[4];
-	unsigned char nbits[4];
-	unsigned char ntime[4];
-	bool clean;
-	double diff;
+    char *job_id;
+    unsigned char prevhash[32];
+    size_t coinbase_size;
+    unsigned char *coinbase;
+    unsigned char *xnonce2;
+    int merkle_count;
+    unsigned char **merkle;
+    unsigned char version[4];
+    unsigned char nbits[4];
+    unsigned char ntime[4];
+    bool clean;
+    double diff;
 };
 
 struct stratum_ctx {
-	char *url;
+    char *url;
 
-	CURL *curl;
-	char *curl_url;
-	char curl_err_str[CURL_ERROR_SIZE];
-	curl_socket_t sock;
-	size_t sockbuf_size;
-	char *sockbuf;
-	pthread_mutex_t sock_lock;
+    CURL *curl;
+    char *curl_url;
+    char curl_err_str[CURL_ERROR_SIZE];
+    curl_socket_t sock;
+    size_t sockbuf_size;
+    char *sockbuf;
+    pthread_mutex_t sock_lock;
 
-	double next_diff;
+    double next_diff;
 
-	char *session_id;
-	size_t xnonce1_size;
-	unsigned char *xnonce1;
-	size_t xnonce2_size;
-	struct stratum_job job;
-	pthread_mutex_t work_lock;
+    char *session_id;
+    size_t xnonce1_size;
+    unsigned char *xnonce1;
+    size_t xnonce2_size;
+    struct stratum_job job;
+    pthread_mutex_t work_lock;
 };
 
 bool stratum_socket_full(struct stratum_ctx *sctx, int timeout);
