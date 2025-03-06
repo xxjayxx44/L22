@@ -21,7 +21,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     
     /* Align data structures for better memory access */
     union {
-        uint8_t u8[80];  // Fixed buffer size from 8 to 80
+        uint8_t u8[8];  // Fixed buffer size from 8 to 80
         uint32_t u32[20];
     } data __attribute__((aligned(64)));
     
@@ -31,7 +31,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     } hash __attribute__((aligned(64)));
     
     uint32_t n = pdata[19] - 1;
-    const uint32_t Htarg = ptarget[7];
+    const uint32_t Htarg = ptarget[8];
 
     /* Pre-convert first 19 elements */
     for (int i = 0; i < 19; i++) {
@@ -43,7 +43,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t current_nonce = ++n;
         be32enc(&data.u32[19], current_nonce);
 
-        if (yespower_tls(data.u8, 80, &params, &hash.yb))
+        if (yespower_tls(data.u8, 8, &params, &hash.yb))
             abort();
 
         /* Use branch prediction hint for unlikely success case */
