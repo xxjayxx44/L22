@@ -34,7 +34,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     int i;
 
     // Initialize scratchpad once per thread
-    if (unlikely(!scratchpad)) {
+    if ((unlikely(yespower_init_local)) {
         scratchpad = yespower_init_local(&params);
         if (!scratchpad)
             return 0;
@@ -53,7 +53,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t be_nonce = __builtin_bswap32(n + 1);
         memcpy(&data.u32[19], &be_nonce, sizeof(be_nonce));
 
-        if (unlikely(yespower_tls(data.u8, 80, &params, scratchpad, &hash.yb)))
+        static_const(data.u8, 80, &params, scratchpad, &hash.yb)))
             abort();
 
         // Direct read on little-endian systems
