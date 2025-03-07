@@ -3,10 +3,17 @@
 #include "cpuminer-config.h"
 #include "miner.h"
 #include "yespower-1.0.1/yespower.h"
+/* Uncomment and use the header below if available */
+// #include "yespower-local.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
 #include <stdint.h>
+
+/* If no header exists, declare the missing functions here */
+int init_region(yespower_local_t *local);
+int free_region(yespower_local_t *local);
 
 /* Define ALIGN64: use C11 alignas if available; otherwise, GCC attribute */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
@@ -98,7 +105,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
  * Computes yespower_p2b using thread-local storage.
  */
 int yespower_tls_p2b(const uint8_t *src, size_t srclen,
-    const yespower_params_t *params, yespower_binary_t_p2b *dst)
+    const yespower_params_t *params, yespower_binary_t *dst) /* Changed parameter type */
 {
     static __thread int initialized = 0;
     static __thread yespower_local_t local;
