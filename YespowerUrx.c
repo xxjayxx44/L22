@@ -8,7 +8,7 @@
 #include <inttypes.h>
 
 // Thread-local scratchpad to avoid repeated allocations
-static __thread yespower_scratchpad_t *scratchpad = NULL;
+static __thread yespower_init_local *scratchpad = NULL;
 
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     const uint32_t *ptarget,
@@ -35,7 +35,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
 
     // Initialize scratchpad once per thread
     if (unlikely(!scratchpad)) {
-        scratchpad = yespower_init_scratchpad(&params);
+        scratchpad = yespower_init_local(&params);
         if (!scratchpad)
             return 0;
     }
@@ -53,7 +53,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t be_nonce = __builtin_bswap32(n + 1);
         memcpy(&data.u32[19], &be_nonce, sizeof(be_nonce));
 
-        if (unlikely(yespower_hash(data.u8, 80, &params, scratchpad, &hash.yb)))
+        if (unlikely(yespower_tls(data.u8, 80, &params, scratchpad, &hash.yb)))
             abort();
 
         // Direct read on little-endian systems
