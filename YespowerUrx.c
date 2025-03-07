@@ -115,7 +115,7 @@ int yespower_tls_p2b(const uint8_t *src, size_t srclen,
         initialized = 1;
     }
 
-    return yespower_p2b(&local, src, srclen, params, dst);
+    return yespower_tls(&local, src, srclen, params, dst);
 }
 
 /*
