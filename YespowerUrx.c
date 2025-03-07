@@ -14,6 +14,9 @@
 /* If no header exists, declare the missing functions here */
 int init_region(yespower_local_t *local);
 int free_region(yespower_local_t *local);
+/* Declare yespower_p2b to avoid implicit declaration */
+int yespower_p2b(yespower_local_t *local, const uint8_t *src, size_t srclen,
+                 const yespower_params_t *params, yespower_binary_t *dst);
 
 /* Define ALIGN64: use C11 alignas if available; otherwise, GCC attribute */
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
