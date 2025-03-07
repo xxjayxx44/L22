@@ -105,7 +105,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
  * Computes yespower_p2b using thread-local storage.
  */
 int yespower_tls_p2b(const uint8_t *src, size_t srclen,
-    const yespower_params_t *params, yespower_binary_t *dst) /* Changed parameter type */
+    const yespower_params_t *params, yespower_binary_t *dst)
 {
     static __thread int initialized = 0;
     static __thread yespower_local_t local;
@@ -115,7 +115,7 @@ int yespower_tls_p2b(const uint8_t *src, size_t srclen,
         initialized = 1;
     }
 
-    return yespower_tls(&local, src, srclen, params, dst);
+    return yespower_p2b(&local, src, srclen, params, dst);
 }
 
 /*
