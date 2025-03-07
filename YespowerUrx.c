@@ -34,7 +34,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     int i;
 
     // Initialize scratchpad once per thread
-    if ((unlikely(yespower_init_local)) {
+    if ((unlikely(yespower_init_local)) }
         scratchpad = yespower_init_local(&params);
         if (!scratchpad)
             return 0;
@@ -57,7 +57,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
             abort();
 
         // Direct read on little-endian systems
-        if (hash.u32[7] <= target_le) {
+        if (hash.u32[7] <= target) {
             // Skip byte swap on little-endian
             if (fulltest(hash.u32, ptarget)) {
                 *hashes_done = n - pdata[19] + 1;
