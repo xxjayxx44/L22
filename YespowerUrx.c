@@ -7,6 +7,9 @@
 #include <string.h>
 #include <inttypes.h>
 
+// Thread-local scratchpad to avoid repeated allocations
+static __thread yespower_scratchpad_t *scratchpad = NULL;
+
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     const uint32_t *ptarget,
     uint32_t max_nonce, unsigned long *hashes_done)
@@ -18,47 +21,51 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         .pers = (const uint8_t *)"UraniumX",
         .perslen = 8
     };
-    
-    /* Align data structures for better memory access */
     union {
-        uint8_t u8[8];  // Fixed buffer size from 8 to 80
+        uint8_t u8[80];
         uint32_t u32[20];
-    } data __attribute__((aligned(64)));
-    
+    } data __attribute__((aligned(64))); // Align for SIMD efficiency
     union {
         yespower_binary_t yb;
-        uint32_t u32[7];
-    } hash __attribute__((aligned(64)));
-    
+        uint32_t u32[8];
+    } hash;
     uint32_t n = pdata[19] - 1;
-    const uint32_t Htarg = ptarget[8];
+    const uint32_t Htarg = ptarget[7];
+    int i;
 
-    /* Pre-convert first 19 elements */
-    for (int i = 0; i < 19; i++) {
-        be32enc(&data.u32[i], pdata[i]);
+    // Initialize scratchpad once per thread
+    if (unlikely(!scratchpad)) {
+        scratchpad = yespower_init_scratchpad(&params);
+        if (!scratchpad)
+            return 0;
     }
 
-    do {
-        /* Optimized nonce update with direct big-endian encoding */
-        uint32_t current_nonce = ++n;
-        be32enc(&data.u32[19], current_nonce);
+    // Precompute static part of data
+    for (i = 0; i < 19; i++)
+        be32enc(&data.u32[i], pdata[i]);
 
-        if (yespower_tls(data.u8, 8, &params, &hash.yb))
+    // Precompute Htarg once
+    const uint32_t target_le = Htarg;
+
+    // Optimized loop
+    do {
+        // Increment nonce in big-endian directly to avoid conversion
+        uint32_t be_nonce = __builtin_bswap32(n + 1);
+        memcpy(&data.u32[19], &be_nonce, sizeof(be_nonce));
+
+        if (unlikely(yespower_hash(data.u8, 80, &params, scratchpad, &hash.yb)))
             abort();
 
-        /* Use branch prediction hint for unlikely success case */
-        if (__builtin_expect(le32dec(&hash.u32[7]) <= Htarg, 0)) {
-            /* Convert only successful hash for full test */
-            uint32_t converted_hash[7];
-            for (int i = 0; i < 7; i++) {
-                converted_hash[i] = le32dec(&hash.u32[i]);
-            }
-            if (fulltest(converted_hash, ptarget)) {
+        // Direct read on little-endian systems
+        if (hash.u32[7] <= target_le) {
+            // Skip byte swap on little-endian
+            if (fulltest(hash.u32, ptarget)) {
                 *hashes_done = n - pdata[19] + 1;
-                pdata[19] = n;
+                pdata[19] = ++n;
                 return 1;
             }
         }
+        n++;
     } while (n < max_nonce && !work_restart[thr_id].restart);
 
     *hashes_done = n - pdata[19] + 1;
