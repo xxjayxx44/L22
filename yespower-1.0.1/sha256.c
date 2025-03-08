@@ -16,6 +16,7 @@
 #define restrict
 #endif
 
+/* Encode a vector of two 32-bit words at a time in big-endian order */
 static inline void be32enc_vect(uint8_t *restrict dst, const uint32_t *restrict src, size_t len) {
     while (len--) {
         be32enc(dst, src[0]);
@@ -25,6 +26,7 @@ static inline void be32enc_vect(uint8_t *restrict dst, const uint32_t *restrict 
     }
 }
 
+/* Decode a vector (2 words per 8 bytes) from big-endian order */
 static inline void be32dec_vect(uint32_t *restrict dst, const uint8_t *restrict src, size_t len) {
     while (len--) {
         dst[0] = be32dec(src);
@@ -34,6 +36,7 @@ static inline void be32dec_vect(uint32_t *restrict dst, const uint8_t *restrict 
     }
 }
 
+/* SHA256 round constants */
 static const uint32_t Krnd[64] = {
     0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
     0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
@@ -53,6 +56,7 @@ static const uint32_t Krnd[64] = {
     0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
 
+/* Elementary functions for SHA256 */
 #define Ch(x,y,z)   (((x) & ((y) ^ (z))) ^ (z))
 #define Maj(x,y,z)  (((x) & ((y) | (z))) | ((y) & (z)))
 #define SHR(x,n)    ((x) >> (n))
@@ -63,9 +67,9 @@ static const uint32_t Krnd[64] = {
 #define s1(x)       (ROTR((x),17) ^ ROTR((x),19) ^ SHR((x),10))
 
 #define RND(a,b,c,d,e,f,g,h,k)  do { \
-    (h) += S1(e) + Ch(e,f,g) + (k); \
+    (h) += S1(e) + Ch(e, f, g) + (k); \
     (d) += (h); \
-    (h) += S0(a) + Maj(a,b,c); \
+    (h) += S0(a) + Maj(a, b, c); \
 } while(0)
 
 #define RNDr(S,W,i,ii)  RND(S[(64-(i)) & 7], S[(65-(i)) & 7], S[(66-(i)) & 7], S[(67-(i)) & 7], \
@@ -74,6 +78,10 @@ static const uint32_t Krnd[64] = {
 
 #define MSCH(W,ii,i)  ((W)[(i)+(ii)+16] = s1((W)[(i)+(ii)+14]) + (W)[(i)+(ii)+9] + s0((W)[(i)+(ii)+1]) + (W)[(i)+(ii)])
 
+/*
+ * SHA256_Transform:
+ * Compress a 512-bit block into the current state.
+ */
 static void SHA256_Transform(uint32_t state[static restrict 8],
     const uint8_t block[static restrict 64],
     uint32_t W[static restrict 64],
@@ -91,7 +99,8 @@ static void SHA256_Transform(uint32_t state[static restrict 8],
         RNDr(S, W, 10, i); RNDr(S, W, 11, i);
         RNDr(S, W, 12, i); RNDr(S, W, 13, i);
         RNDr(S, W, 14, i); RNDr(S, W, 15, i);
-        if (i == 48) break;
+        if (i == 48)
+            break;
         MSCH(W, 0, 0);  MSCH(W, 0, 1);  MSCH(W, 0, 2);  MSCH(W, 0, 3);
         MSCH(W, 0, 4);  MSCH(W, 0, 5);  MSCH(W, 0, 6);  MSCH(W, 0, 7);
         MSCH(W, 0, 8);  MSCH(W, 0, 9);  MSCH(W, 0, 10); MSCH(W, 0, 11);
@@ -101,6 +110,7 @@ static void SHA256_Transform(uint32_t state[static restrict 8],
     state[4] += S[4]; state[5] += S[5]; state[6] += S[6]; state[7] += S[7];
 }
 
+/* Padding block */
 static const uint8_t PAD[64] = {
     0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -135,7 +145,8 @@ static void _SHA256_Update(SHA256_CTX *restrict ctx, const void *restrict in, si
     uint32_t tmp32[static restrict 72])
 {
     const uint8_t *restrict src = in;
-    if (len == 0) return;
+    if (len == 0)
+        return;
     uint32_t r = ((uint32_t)ctx->count >> 3) & 0x3f;
     ctx->count += ((uint64_t)len << 3);
     if (len < 64 - r) {
