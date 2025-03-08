@@ -94,15 +94,6 @@ extern int yespower(yespower_local_t *local,
 extern int yespower_tls(const uint8_t *src, size_t srclen,
     const yespower_params_t *params, yespower_binary_t *dst);
 
-/**
- * yespower_cleanup():
- * Free the thread-local buffer used by yespower_tls().
- * This function should be called when a thread exits to avoid memory leaks.
- *
- * MT-safe as long as it is called by the thread that owns the buffer.
- */
-extern void yespower_cleanup(void);
-
 #ifdef __cplusplus
 }
 #endif
