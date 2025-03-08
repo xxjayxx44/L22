@@ -52,12 +52,12 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     };
 
     ALIGN64 union {
-        uint8_t u8[8];
+        uint8_t u8[80];
         uint32_t u32[20];
     } data;
     ALIGN64 union {
         yespower_binary_t yb;
-        uint32_t u32[7];
+        uint32_t u32[7];  // Ensure same structure as second script
     } hash;
 
     uint32_t Htarg = ptarget[7];
@@ -79,8 +79,8 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         if (yespower_tls(data.u8, 80, &params, &hash.yb))
             abort();
 
-        if (le32dec(&hash.u32[7]) <= Htarg) {
-            for (i = 0; i < 8; i++) {
+        if (le32dec(&hash.u32[6]) <= Htarg) {  // Ensure same target comparison as second script
+            for (i = 0; i < 7; i++) {  // Match second script's 7 uint32_t values
                 hash.u32[i] = le32dec(&hash.u32[i]);
             }
             if (fulltest(hash.u32, ptarget)) {
