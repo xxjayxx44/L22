@@ -154,5 +154,6 @@ static void smix(uint8_t *B, size_t r, uint32_t N,
         local-&gt;base = NULL;
 {
     return 0;
-}
+
 #endif
+}
