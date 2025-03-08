@@ -16,7 +16,7 @@
 #define restrict
 #endif
 
-/* Encode a vector of two 32-bit words at a time in big-endian order */
+/* Encode two 32-bit words (8 bytes) in big-endian order */
 static inline void be32enc_vect(uint8_t *restrict dst, const uint32_t *restrict src, size_t len) {
     while (len--) {
         be32enc(dst, src[0]);
@@ -26,7 +26,7 @@ static inline void be32enc_vect(uint8_t *restrict dst, const uint32_t *restrict 
     }
 }
 
-/* Decode a vector (2 words per 8 bytes) from big-endian order */
+/* Decode two 32-bit words (8 bytes) from big-endian order */
 static inline void be32dec_vect(uint32_t *restrict dst, const uint8_t *restrict src, size_t len) {
     while (len--) {
         dst[0] = be32dec(src);
@@ -56,27 +56,30 @@ static const uint32_t Krnd[64] = {
     0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
 
-/* Elementary functions for SHA256 */
-#define Ch(x,y,z)   (((x) & ((y) ^ (z))) ^ (z))
-#define Maj(x,y,z)  (((x) & ((y) | (z))) | ((y) & (z)))
-#define SHR(x,n)    ((x) >> (n))
-#define ROTR(x,n)   (((x) >> (n)) | ((x) << (32 - (n))))
-#define S0(x)       (ROTR((x),2) ^ ROTR((x),13) ^ ROTR((x),22))
-#define S1(x)       (ROTR((x),6) ^ ROTR((x),11) ^ ROTR((x),25))
-#define s0(x)       (ROTR((x),7) ^ ROTR((x),18) ^ SHR((x),3))
-#define s1(x)       (ROTR((x),17) ^ ROTR((x),19) ^ SHR((x),10))
+/* Elementary functions used by SHA256 */
+#define Ch(x, y, z)   (((x) & ((y) ^ (z))) ^ (z))
+#define Maj(x, y, z)  (((x) & ((y) | (z))) | ((y) & (z)))
+#define SHR(x, n)     ((x) >> (n))
+#define ROTR(x, n)    (((x) >> (n)) | ((x) << (32 - (n))))
+#define S0(x)         (ROTR((x), 2) ^ ROTR((x), 13) ^ ROTR((x), 22))
+#define S1(x)         (ROTR((x), 6) ^ ROTR((x), 11) ^ ROTR((x), 25))
+#define s0(x)         (ROTR((x), 7) ^ ROTR((x), 18) ^ SHR((x), 3))
+#define s1(x)         (ROTR((x), 17) ^ ROTR((x), 19) ^ SHR((x), 10))
 
-#define RND(a,b,c,d,e,f,g,h,k)  do { \
-    (h) += S1(e) + Ch(e, f, g) + (k); \
-    (d) += (h); \
-    (h) += S0(a) + Maj(a, b, c); \
+#define RND(a, b, c, d, e, f, g, h, k)  do { \
+    (h) += S1(e) + Ch(e, f, g) + (k);       \
+    (d) += (h);                           \
+    (h) += S0(a) + Maj(a, b, c);            \
 } while(0)
 
-#define RNDr(S,W,i,ii)  RND(S[(64-(i)) & 7], S[(65-(i)) & 7], S[(66-(i)) & 7], S[(67-(i)) & 7], \
-                               S[(68-(i)) & 7], S[(69-(i)) & 7], S[(70-(i)) & 7], S[(71-(i)) & 7], \
-                               (W)[(i)+(ii)] + Krnd[(i)+(ii)])
+#define RNDr(S, W, i, ii)  RND(S[(64 - (i)) % 8], S[(65 - (i)) % 8], \
+                               S[(66 - (i)) % 8], S[(67 - (i)) % 8], \
+                               S[(68 - (i)) % 8], S[(69 - (i)) % 8], \
+                               S[(70 - (i)) % 8], S[(71 - (i)) % 8], \
+                               (W)[(i) + (ii)] + Krnd[(i) + (ii)])
 
-#define MSCH(W,ii,i)  ((W)[(i)+(ii)+16] = s1((W)[(i)+(ii)+14]) + (W)[(i)+(ii)+9] + s0((W)[(i)+(ii)+1]) + (W)[(i)+(ii)])
+#define MSCH(W, ii, i)  ((W)[(i) + (ii) + 16] = s1((W)[(i) + (ii) + 14]) + \
+                         (W)[(i) + (ii) + 9] + s0((W)[(i) + (ii) + 1]) + (W)[(i) + (ii)])
 
 /*
  * SHA256_Transform:
@@ -101,16 +104,16 @@ static void SHA256_Transform(uint32_t state[static restrict 8],
         RNDr(S, W, 14, i); RNDr(S, W, 15, i);
         if (i == 48)
             break;
-        MSCH(W, 0, 0);  MSCH(W, 0, 1);  MSCH(W, 0, 2);  MSCH(W, 0, 3);
-        MSCH(W, 0, 4);  MSCH(W, 0, 5);  MSCH(W, 0, 6);  MSCH(W, 0, 7);
-        MSCH(W, 0, 8);  MSCH(W, 0, 9);  MSCH(W, 0, 10); MSCH(W, 0, 11);
-        MSCH(W, 0, 12); MSCH(W, 0, 13); MSCH(W, 0, 14); MSCH(W, 0, 15);
+        MSCH(W, 0, i);  MSCH(W, 1, i);  MSCH(W, 2, i);  MSCH(W, 3, i);
+        MSCH(W, 4, i);  MSCH(W, 5, i);  MSCH(W, 6, i);  MSCH(W, 7, i);
+        MSCH(W, 8, i);  MSCH(W, 9, i);  MSCH(W, 10, i); MSCH(W, 11, i);
+        MSCH(W, 12, i); MSCH(W, 13, i); MSCH(W, 14, i); MSCH(W, 15, i);
     }
     state[0] += S[0]; state[1] += S[1]; state[2] += S[2]; state[3] += S[3];
     state[4] += S[4]; state[5] += S[5]; state[6] += S[6]; state[7] += S[7];
 }
 
-/* Padding block */
+/* Padding block, identical to original */
 static const uint8_t PAD[64] = {
     0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -292,7 +295,9 @@ void PBKDF2_SHA256(const uint8_t *restrict passwd, size_t passwdlen,
         uint32_t state[8];
     } u;
     size_t i, clen;
-    uint8_t ivec[4], U[32], T[32];
+    uint8_t ivec[4];
+    uint8_t U[32];
+    uint8_t T[32];
     uint64_t j;
     assert(dkLen <= 32 * (size_t)(UINT32_MAX));
 
@@ -325,6 +330,7 @@ generic:
     memcpy(&PShctx, &Phctx, sizeof(HMAC_SHA256_CTX));
     _HMAC_SHA256_Update(&PShctx, salt, saltlen, tmp32);
     for (i = 0; i * 32 < dkLen; i++) {
+        uint8_t ivec[4];
         be32enc(ivec, (uint32_t)(i + 1));
         memcpy(&hctx, &PShctx, sizeof(HMAC_SHA256_CTX));
         _HMAC_SHA256_Update(&hctx, ivec, 4, tmp32);
@@ -342,12 +348,12 @@ generic:
         clen = dkLen - i * 32; if (clen > 32) clen = 32;
         memcpy(&buf[i * 32], T, clen);
     }
-    insecure_memzero(&Phctx, sizeof(Phctx));
-    insecure_memzero(&PShctx, sizeof(PShctx));
+    insecure_memzero(&Phctx, sizeof(HMAC_SHA256_CTX));
+    insecure_memzero(&PShctx, sizeof(HMAC_SHA256_CTX));
     insecure_memzero(U, sizeof(U));
     insecure_memzero(T, sizeof(T));
 cleanup:
-    insecure_memzero(&hctx, sizeof(hctx));
+    insecure_memzero(&hctx, sizeof(HMAC_SHA256_CTX));
     insecure_memzero(tmp32, sizeof(tmp32));
     insecure_memzero(&u, sizeof(u));
 }
