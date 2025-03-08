@@ -52,12 +52,12 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     };
 
     ALIGN64 union {
-        uint8_t u8[80];
+        uint8_t u8[8];
         uint32_t u32[20];
     } data;
     ALIGN64 union {
         yespower_binary_t yb;
-        uint32_t u32[8];
+        uint32_t u32[7];
     } hash;
 
     uint32_t Htarg = ptarget[7];
