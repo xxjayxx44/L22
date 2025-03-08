@@ -1,4 +1,3 @@
-/* Include necessary headers and define macros */
 #include <emmintrin.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -7,7 +6,6 @@
 #include "sysendian.h"
 #include "yespower.h"
 
-/* Define macros for SIMD operations */
 #ifdef __SSE2__
 #define SIMD_ALIGN __attribute__((aligned(16)))
 #else
