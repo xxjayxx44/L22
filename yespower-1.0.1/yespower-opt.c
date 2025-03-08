@@ -152,7 +152,7 @@ static void smix(uint8_t *B, size_t r, uint32_t N,
         secure_memzero(local-&gt;base, local-&gt;aligned_size);
         free(local-&gt;base);
         local-&gt;base = NULL;
-    }
+{
     return 0;
 }
 #endif
