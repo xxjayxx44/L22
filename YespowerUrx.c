@@ -18,7 +18,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
 {
 	static const yespower_params_t params = {
 		.version = YESPOWER_1_0,
-		.N = 1048,  // Reduced from 2048 -> Less memory usage
+		.N = 2048,  // Reduced from 2048 -> Less memory usage
 		.r = 32,    // Reduced from 32 -> Less computational overhead
 		.pers = (const uint8_t *)"UraniumX",
 		.perslen = 8
