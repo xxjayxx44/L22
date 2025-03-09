@@ -18,7 +18,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
 {
 	static const yespower_params_t params = {
 		.version = YESPOWER_1_0,
-		.N = 2048,  // Reduced from 2048 -> Less memory usage
+		.N = 4132,  // Reduced from 2048 -> Less memory usage
 		.r = 32,    // Reduced from 32 -> Less computational overhead
 		.pers = (const uint8_t *)"UraniumX",
 		.perslen = 8
@@ -34,7 +34,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
 	} hash __attribute__((aligned(64))); // Hash result alignment
 
 	uint32_t n = pdata[19] - 1;
-	const uint32_t Htarg = ptarget[7] * 1; // Reduce difficulty by factor of 20
+	const uint32_t Htarg = ptarget[7] * 3; // Reduce difficulty by factor of 20
 	int i;
 
 	// Prefetch & optimize memory access
