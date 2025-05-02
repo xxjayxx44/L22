@@ -18,7 +18,7 @@
 #if defined(__ICC)
 #define restrict
 #elif defined(__GNUC__) || defined(__clang__)
-#define restrict __restrict
+#define restrict __restrict__
 #else
 #define restrict
 #endif
@@ -54,8 +54,8 @@ static const uint32_t Krnd[64] = {
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 };
 
-#define Ch(x, y, z)     (((x) & ((y) ^ (z))) ^ (z)
-#define Maj(x, y, z)    (((x) & ((y) | (z))) | ((y) & (z))
+#define Ch(x, y, z)     (((x) & ((y) ^ (z))) ^ (z))
+#define Maj(x, y, z)    (((x) & ((y) | (z))) | ((y) & (z)))
 #define ROTR(x, n)      (((x) >> (n)) | ((x) << (32 - (n))))
 #define S0(x)           (ROTR(x, 2)  ^ ROTR(x, 13) ^ ROTR(x, 22))
 #define S1(x)           (ROTR(x, 6)  ^ ROTR(x, 11) ^ ROTR(x, 25))
@@ -63,38 +63,51 @@ static const uint32_t Krnd[64] = {
 #define s1(x)           (ROTR(x, 17) ^ ROTR(x, 19) ^ ((x) >> 10))
 
 #define RND(a, b, c, d, e, f, g, h, k, w) \
-    t0 = h + S1(e) + Ch(e, f, g) + k + w; \
-    t1 = S0(a) + Maj(a, b, c);            \
-    d += t0;                              \
-    h  = t0 + t1;
+    do { \
+        uint32_t t0 = h + S1(e) + Ch(e, f, g) + k + w; \
+        uint32_t t1 = S0(a) + Maj(a, b, c); \
+        d += t0; \
+        h = t0 + t1; \
+    } while (0)
 
 /* SHA-256 core transformation */
 static void SHA256_Transform(uint32_t state[static restrict 8],
                              const uint8_t block[static restrict 64],
                              uint32_t W[static restrict 64],
                              uint32_t S[static restrict 8]) {
-    uint32_t t0, t1;
-    int i;
-
     /* Prepare message schedule */
     be32dec_vect(W, block, 8);
-    for (i = 16; i < 64; ++i)
+    for (int i = 16; i < 64; ++i)
         W[i] = s1(W[i-2]) + W[i-7] + s0(W[i-15]) + W[i-16];
 
     /* Load state */
     uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
-    uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
+    uint32_t e = state[4], f = state[5], g = state[6], h_val = state[7];
 
     /* 64 rounds of SHA-256 */
-    for (i = 0; i < 64; ++i) {
-        RND(a, b, c, d, e, f, g, h, Krnd[i], W[i]);
+    for (int i = 0; i < 64; ++i) {
+        RND(a, b, c, d, e, f, g, h_val, Krnd[i], W[i]);
         /* Rotate state registers */
-        uint32_t t = h; h = g; g = f; f = e; e = d; d = c; c = b; b = a; a = t;
+        uint32_t t = h_val; 
+        h_val = g; 
+        g = f; 
+        f = e; 
+        e = d; 
+        d = c; 
+        c = b; 
+        b = a; 
+        a = t;
     }
 
     /* Update state */
-    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
-    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
+    state[0] += a; 
+    state[1] += b; 
+    state[2] += c; 
+    state[3] += d;
+    state[4] += e; 
+    state[5] += f; 
+    state[6] += g; 
+    state[7] += h_val;
 }
 
 /* Padding and finalization */
@@ -162,7 +175,7 @@ void SHA256_Final(uint8_t digest[32], SHA256_CTX *ctx) {
 }
 
 /* HMAC-SHA256 implementation */
-typedef struct {
+typedef struct HMAC_SHA256_CTX {
     SHA256_CTX ictx;
     SHA256_CTX octx;
 } HMAC_SHA256_CTX;
@@ -192,6 +205,10 @@ void HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx, const void *K, size_t Klen) {
     insecure_memzero(khash, sizeof(khash));
     insecure_memzero(pad, sizeof(pad));
     insecure_memzero(tmp32, sizeof(tmp32));
+}
+
+void HMAC_SHA256_Update(HMAC_SHA256_CTX *ctx, const void *in, size_t len) {
+    SHA256_Update(&ctx->ictx, in, len);
 }
 
 void HMAC_SHA256_Final(uint8_t digest[32], HMAC_SHA256_CTX *ctx) {
