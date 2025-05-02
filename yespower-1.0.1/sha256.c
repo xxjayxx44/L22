@@ -1,6 +1,7 @@
 /*
  * yespower-1.0.1/sha256.c
  * Optimized SHA-256, HMAC-SHA256, and PBKDF2-SHA256
+ * + wrappers for libcperciva_* symbols
  */
 
 #include <assert.h>
@@ -42,12 +43,12 @@ static const uint32_t K[64] = {
 #define Ch(x,y,z) (((x)&(y)) ^ (~(x)&(z)))
 #define Maj(x,y,z) ((((x)&(y)) ^ ((x)&(z))) ^ ((y)&(z)))
 
-/* Core compression: fully unrolled inner loop */
+/* --- Core SHA-256 --- */
 static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
     uint32_t W[64], S[8];
     int i;
 
-    /* Message schedule W[0..63] */
+    /* Message schedule */
     for (i = 0; i < 16; i++) {
         W[i] = ((uint32_t)block[4*i] << 24)
              | ((uint32_t)block[4*i+1] << 16)
@@ -58,7 +59,7 @@ static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
         W[i] = s1(W[i-2]) + W[i-7] + s0(W[i-15]) + W[i-16];
     }
 
-    /* Initialize working vars */
+    /* Working variables */
     for (i = 0; i < 8; i++) S[i] = state[i];
 
     /* 64 rounds */
@@ -75,7 +76,7 @@ static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
     for (i = 0; i < 8; i++) state[i] += S[i];
 }
 
-/* Pad and append length (in bits), then transform final block(s) */
+/* Pad with 0x80..0x00 and append length */
 static void SHA256_Pad(SHA256_CTX *ctx, uint8_t buf[64]) {
     size_t r = (ctx->count >> 3) & 0x3f;
     size_t padlen = (r < 56) ? (56 - r) : (120 - r);
@@ -84,13 +85,10 @@ static void SHA256_Pad(SHA256_CTX *ctx, uint8_t buf[64]) {
     memcpy(&ctx->buf[r], PADDING, 1);
     if (padlen > 1) memset(&ctx->buf[r+1], 0, padlen-1);
 
-    /* Append length in bits */
     be64enc(&ctx->buf[56], ctx->count);
 
-    /* Process final block(s) */
     SHA256_Transform(ctx->state, ctx->buf);
     if (padlen > 56) {
-        /* one extra block needed */
         memset(ctx->buf, 0, 56);
         SHA256_Transform(ctx->state, ctx->buf);
     }
@@ -113,44 +111,38 @@ void SHA256_Update(SHA256_CTX *ctx, const void *in, size_t len) {
     if (r && len >= 64 - r) {
         memcpy(&ctx->buf[r], data, 64 - r);
         SHA256_Transform(ctx->state, ctx->buf);
-        data += 64 - r;
-        len  -= 64 - r;
-        r = 0;
+        data += 64 - r; len -= 64 - r; r = 0;
     }
     while (len >= 64) {
         SHA256_Transform(ctx->state, data);
-        data += 64;
-        len  -= 64;
+        data += 64; len -= 64;
     }
     if (len) memcpy(ctx->buf, data, len);
 }
 
 void SHA256_Final(uint8_t digest[32], SHA256_CTX *ctx) {
     SHA256_Pad(ctx, ctx->buf);
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 8; i++)
         be32enc(&digest[4*i], ctx->state[i]);
-    }
     insecure_memzero(ctx, sizeof(*ctx));
 }
 
 void SHA256_Buf(const void *in, size_t len, uint8_t digest[32]) {
-    SHA256_CTX ctx;
-    SHA256_Init(&ctx);
-    SHA256_Update(&ctx, in, len);
-    SHA256_Final(digest, &ctx);
+    SHA256_CTX c;
+    SHA256_Init(&c);
+    SHA256_Update(&c, in, len);
+    SHA256_Final(digest, &c);
 }
 
-/* HMAC-SHA256 */
-
+/* --- HMAC-SHA256 --- */
 static void _HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx,
-    const void *K, size_t Klen, uint8_t pad[64], uint32_t tmp32[72], uint8_t khash[32])
+    const void *K, size_t Klen, uint8_t pad[64], uint8_t kh[32])
 {
     if (Klen > 64) {
         SHA256_Init(&ctx->ictx);
         SHA256_Update(&ctx->ictx, K, Klen);
-        SHA256_Final(khash, &ctx->ictx);
-        K = khash;
-        Klen = 32;
+        SHA256_Final(kh, &ctx->ictx);
+        K = kh; Klen = 32;
     }
     memset(pad, 0x36, 64);
     for (size_t i = 0; i < Klen; i++) pad[i] ^= ((uint8_t*)K)[i];
@@ -163,72 +155,78 @@ static void _HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx,
     SHA256_Update(&ctx->octx, pad, 64);
 }
 
-void HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx, const void *K, size_t Klen) {
-    uint8_t  pad[64], khash[32];
-    uint32_t tmp32[72];
-    _HMAC_SHA256_Init(ctx, K, Klen, pad, tmp32, khash);
-    insecure_memzero(pad, 64);
-    insecure_memzero(khash, 32);
-    insecure_memzero(tmp32, 288);
+void HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx,
+    const void *K, size_t Klen)
+{
+    uint8_t pad[64], kh[32];
+    _HMAC_SHA256_Init(ctx, K, Klen, pad, kh);
+    insecure_memzero(pad, sizeof(pad));
+    insecure_memzero(kh, sizeof(kh));
 }
 
-void HMAC_SHA256_Update(HMAC_SHA256_CTX *ctx, const void *in, size_t len) {
+void HMAC_SHA256_Update(HMAC_SHA256_CTX *ctx,
+    const void *in, size_t len)
+{
     SHA256_Update(&ctx->ictx, in, len);
 }
 
 void HMAC_SHA256_Final(uint8_t digest[32], HMAC_SHA256_CTX *ctx) {
-    uint8_t  ihash[32];
-    uint32_t tmp32[72];
-
-    SHA256_Final(ihash, &ctx->ictx);
-    SHA256_Update(&ctx->octx, ihash, 32);
+    uint8_t ih[32];
+    SHA256_Final(ih, &ctx->ictx);
+    SHA256_Update(&ctx->octx, ih, 32);
     SHA256_Final(digest, &ctx->octx);
-
-    insecure_memzero(ihash, 32);
-    insecure_memzero(tmp32, 288);
+    insecure_memzero(ih, sizeof(ih));
 }
 
-/* PBKDF2 with HMAC-SHA256 */
-
+/* --- PBKDF2-HMAC-SHA256 --- */
 void PBKDF2_SHA256(const uint8_t *passwd, size_t passwdlen,
                    const uint8_t *salt,   size_t saltlen,
                    uint64_t c, uint8_t *buf, size_t dkLen)
 {
-    HMAC_SHA256_CTX Phctx, PShctx, hctx;
-    uint32_t tmp32[72];
-    uint8_t  u[32], T[32];
-    uint8_t  iv[4];
-    size_t   i, j, k, clen;
-
+    HMAC_SHA256_CTX Ph, Ps, h;
+    uint8_t U[32], T[32], iv[4];
     assert(dkLen <= 32*(size_t)UINT32_MAX);
 
-    /* Initial HMAC state with password */
-    HMAC_SHA256_Init(&Phctx, passwd, passwdlen);
-    /* HMAC after password+salt */
-    memcpy(&PShctx, &Phctx, sizeof(Phctx));
-    HMAC_SHA256_Update(&PShctx, salt, saltlen);
+    HMAC_SHA256_Init(&Ph, passwd, passwdlen);
+    memcpy(&Ps, &Ph, sizeof(Ph));
+    HMAC_SHA256_Update(&Ps, salt, saltlen);
 
-    for (i = 0; i*32 < dkLen; i++) {
-        /* INT(i+1) */
+    for (size_t i = 0; i*32 < dkLen; i++) {
         be32enc(iv, (uint32_t)(i+1));
-
-        /* U1 = PRF(P, S||INT) */
-        memcpy(&hctx, &PShctx, sizeof(hctx));
-        HMAC_SHA256_Update(&hctx, iv, 4);
-        HMAC_SHA256_Final(T, &hctx);
-
-        memcpy(u, T, 32);
-
-        for (j = 2; j <= c; j++) {
-            HMAC_SHA256_Init(&hctx, passwd, passwdlen);
-            HMAC_SHA256_Update(&hctx, u, 32);
-            HMAC_SHA256_Final(u, &hctx);
-            for (k = 0; k < 32; k++)
-                T[k] ^= u[k];
+        memcpy(&h, &Ps, sizeof(Ps));
+        HMAC_SHA256_Update(&h, iv, 4);
+        HMAC_SHA256_Final(T, &h);
+        memcpy(U, T, 32);
+        for (uint64_t j = 2; j <= c; j++) {
+            HMAC_SHA256_Init(&h, passwd, passwdlen);
+            HMAC_SHA256_Update(&h, U, 32);
+            HMAC_SHA256_Final(U, &h);
+            for (int k = 0; k < 32; k++) T[k] ^= U[k];
         }
-
-        clen = (dkLen - i*32 > 32) ? 32 : dkLen - i*32;
+        size_t clen = dkLen - i*32;
+        if (clen > 32) clen = 32;
         memcpy(buf + i*32, T, clen);
     }
-    insecure_memzero(tmp32, 288);
+    insecure_memzero(U, sizeof(U));
+    insecure_memzero(T, sizeof(T));
+}
+
+/* --- libcperciva_* wrappers for compatibility --- */
+
+void libcperciva_SHA256_Buf(const void *in, size_t len, uint8_t digest[32]) {
+    SHA256_Buf(in, len, digest);
+}
+void libcperciva_HMAC_SHA256_Buf(const void *K, size_t Klen,
+    const void *in, size_t len, uint8_t digest[32])
+{
+    HMAC_SHA256_CTX ctx;
+    HMAC_SHA256_Init(&ctx, K, Klen);
+    HMAC_SHA256_Update(&ctx, in, len);
+    HMAC_SHA256_Final(digest, &ctx);
+}
+void libcperciva_PBKDF2_SHA256(const uint8_t *passwd, size_t passwdlen,
+                               const uint8_t *salt, size_t saltlen,
+                               uint64_t c, uint8_t *buf, size_t dkLen)
+{
+    PBKDF2_SHA256(passwd, passwdlen, salt, saltlen, c, buf, dkLen);
 }
