@@ -38,10 +38,6 @@ static inline uint32_t load_be32(const uint32_t *p) {
     uint32_t v = *p;
     return (v<<24) | ((v>>8)&0xff00) | ((v<<8)&0xff0000) | (v>>24);
 }
-static inline void store_be32(uint32_t *p, uint32_t v) {
-    uint32_t w = (v<<24) | ((v>>8)&0xff00) | ((v<<8)&0xff0000) | (v>>24);
-    *p = w;
-}
 
 // SHA256 basic operations
 #define ROTR(x,n)   ((x >> n) | (x << (32-n)))
@@ -57,11 +53,10 @@ void sha256_init(uint32_t state[8]) {
 }
 
 void sha256_transform(uint32_t state[8], const uint32_t block[16], int swap) {
-    uint32_t W[64];
-    uint32_t a,b,c,d,e,f,g,h;
+    uint32_t W[64], a,b,c,d,e,f,g,h;
     int t;
 
-    // Prepare message schedule W
+    // Prepare message schedule
     if (swap) {
         for (t = 0; t < 16; t++)
             W[t] = load_be32(&block[t]);
@@ -69,9 +64,8 @@ void sha256_transform(uint32_t state[8], const uint32_t block[16], int swap) {
         for (t = 0; t < 16; t++)
             W[t] = block[t];
     }
-    for (t = 16; t < 64; t++) {
+    for (t = 16; t < 64; t++)
         W[t] = s1(W[t-2]) + W[t-7] + s0(W[t-15]) + W[t-16];
-    }
 
     // Initialize working vars
     a = state[0]; b = state[1]; c = state[2]; d = state[3];
@@ -95,6 +89,7 @@ void sha256d(unsigned char *out, const unsigned char *data, int len) {
     uint32_t state[8], mid[16], block[16];
     unsigned char buf[64];
     int i, rem;
+    uint64_t bits;
 
     // First pass
     sha256_init(state);
@@ -102,6 +97,7 @@ void sha256d(unsigned char *out, const unsigned char *data, int len) {
         memcpy(block, data + i, 64);
         sha256_transform(state, block, 1);
     }
+
     // Padding
     rem = len - i;
     memset(buf, 0, 64);
@@ -112,16 +108,15 @@ void sha256d(unsigned char *out, const unsigned char *data, int len) {
         sha256_transform(state, block, 0);
         memset(buf, 0, 64);
     }
-    uint64_t bits = (uint64_t)len * 8;
+    bits = (uint64_t)len * 8;
     bits = __builtin_bswap64(bits);
     memcpy(buf + 56, &bits, 8);
     memcpy(block, buf, 64);
     sha256_transform(state, block, 0);
 
-    // Save midstate for second pass
+    // Save midstate
     for (i = 0; i < 8; i++) mid[i] = state[i];
-    // zero-extend mid[8..15]
-    for (i = 8; i < 16; i++) mid[i] = 0;
+    for (   ; i < 16; i++) mid[i] = 0;
 
     // Second pass
     sha256_init(state);
