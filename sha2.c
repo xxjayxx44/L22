@@ -33,7 +33,15 @@ static const uint32_t K[64] = {
     0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 };
 
-// Big-endian load/store
+// SHA256d padding constants
+static const uint32_t sha256d_hash1[16] = {
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000000,
+    0x80000000, 0x00000000, 0x00000000, 0x00000000,
+    0x00000000, 0x00000000, 0x00000000, 0x00000100
+};
+
+// Big-endian load
 static inline uint32_t load_be32(const uint32_t *p) {
     uint32_t v = *p;
     return (v<<24) | ((v>>8)&0xff00) | ((v<<8)&0xff0000) | (v>>24);
@@ -114,9 +122,9 @@ void sha256d(unsigned char *out, const unsigned char *data, int len) {
     memcpy(block, buf, 64);
     sha256_transform(state, block, 0);
 
-    // Save midstate
+    // Prepare second-pass block: midstate + sha256d_hash1
     for (i = 0; i < 8; i++) mid[i] = state[i];
-    for (   ; i < 16; i++) mid[i] = 0;
+    for (   ; i < 16; i++) mid[i] = sha256d_hash1[i];
 
     // Second pass
     sha256_init(state);
