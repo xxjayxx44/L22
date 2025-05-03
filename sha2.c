@@ -1,7 +1,7 @@
 /*
  * yespower-1.0.1/sha256.c
  * Optimized SHA-256 + double-SHA256 + HMAC-SHA256 + PBKDF2-HMAC-SHA256
- * Fixed to remove dependency on sysendian.h by inlining BE encode/decode.
+ * No dependency on sysendian.h — all BE helpers inlined
  */
 
 #include <assert.h>
@@ -39,15 +39,20 @@ static inline void be64enc(uint8_t *p, uint64_t x) {
     p[7] = (uint8_t) x;
 }
 
-/* --- SHA-256 constants and macros --- */
+/* Byte-swap 32-bit word */
+static inline uint32_t swab32(uint32_t x) {
+    return ((x << 24) & 0xff000000u)
+         | ((x <<  8) & 0x00ff0000u)
+         | ((x >>  8) & 0x0000ff00u)
+         | ((x >> 24) & 0x000000ffu);
+}
 
-/* Initial hash state */
+/* --- SHA-256 constants & macros --- */
 static const uint32_t H0_IV[8] = {
     0x6A09E667UL,0xBB67AE85UL,0x3C6EF372UL,0xA54FF53AUL,
     0x510E527FUL,0x9B05688CUL,0x1F83D9ABUL,0x5BE0CD19UL
 };
 
-/* Round constants */
 static const uint32_t K256[64] = {
     0x428a2f98UL,0x71374491UL,0xb5c0fbcfUL,0xe9b5dba5UL,
     0x3956c25bUL,0x59f111f1UL,0x923f82a4UL,0xab1c5ed5UL,
@@ -67,7 +72,6 @@ static const uint32_t K256[64] = {
     0x90befffaUL,0xa4506cebUL,0xbef9a3f7UL,0xc67178f2UL
 };
 
-/* SHA-256 bitwise functions */
 #define ROTR(x,n)   (((x) >> (n)) | ((x) << (32 - (n))))
 #define SHR(x,n)    ((x) >> (n))
 #define Ch(x,y,z)   (((x) & ((y) ^ (z))) ^ (z))
@@ -77,7 +81,7 @@ static const uint32_t K256[64] = {
 #define s0(x)       (ROTR(x, 7)  ^ ROTR(x,18) ^ SHR(x, 3))
 #define s1(x)       (ROTR(x,17)  ^ ROTR(x,19) ^ SHR(x,10))
 
-/* --- SHA-256 core transform --- */
+/* --- Core block transform --- */
 void sha256_transform(uint32_t state[8],
                       const uint32_t block[16],
                       int swap)
@@ -86,18 +90,17 @@ void sha256_transform(uint32_t state[8],
     uint32_t a,b,c,d,e,f,g,h,T1,T2;
     int i;
 
-    /* 1) Prepare schedule */
+    /* 1) Build message schedule */
     if (swap) {
         for (i = 0; i < 16; i++)
-            W[i] = be32dec((const uint8_t *)&block[i]);
+            W[i] = swab32(block[i]);
     } else {
         memcpy(W, block, 16 * 4);
     }
-    for (i = 16; i < 64; i++) {
+    for (i = 16; i < 64; i++)
         W[i] = s1(W[i-2]) + W[i-7] + s0(W[i-15]) + W[i-16];
-    }
 
-    /* 2) Init regs */
+    /* 2) Initialize working vars */
     a = state[0]; b = state[1]; c = state[2]; d = state[3];
     e = state[4]; f = state[5]; g = state[6]; h = state[7];
 
@@ -114,14 +117,13 @@ void sha256_transform(uint32_t state[8],
     state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
-/* --- SHA-256 wrapper API --- */
+/* --- SHA-256 API wrappers --- */
 void SHA256_Init(SHA256_CTX *ctx) {
     ctx->count = 0;
     memcpy(ctx->state, H0_IV, sizeof(H0_IV));
 }
 
 void SHA256_Update(SHA256_CTX *ctx, const uint8_t *data, size_t len) {
-    uint8_t tmp[8];
     size_t r = (ctx->count >> 3) & 0x3F;
     ctx->count += (uint64_t)len << 3;
 
@@ -132,11 +134,11 @@ void SHA256_Update(SHA256_CTX *ctx, const uint8_t *data, size_t len) {
             return;
         }
         memcpy(&ctx->buf[r], data, tofill);
-        sha256_transform(ctx->state, (uint32_t*)ctx->buf, 1);
+        sha256_transform(ctx->state, (const uint32_t*)ctx->buf, 1);
         data += tofill; len -= tofill;
     }
     while (len >= 64) {
-        sha256_transform(ctx->state, (uint32_t*)data, 1);
+        sha256_transform(ctx->state, (const uint32_t*)data, 1);
         data += 64; len -= 64;
     }
     if (len) {
@@ -148,26 +150,25 @@ void SHA256_Final(uint8_t digest[32], SHA256_CTX *ctx) {
     uint8_t tmp[8];
     size_t r = (ctx->count >> 3) & 0x3F;
 
-    if (r < 56) {
-        memset(&ctx->buf[r], 0x80, 1);
-        memset(&ctx->buf[r+1], 0, 55-r);
-    } else {
-        memset(&ctx->buf[r], 0x80, 1);
-        memset(&ctx->buf[r+1], 0, 63-r);
-        sha256_transform(ctx->state, (uint32_t*)ctx->buf, 1);
-        memset(ctx->buf, 0, 56);
+    /* Pad */
+    ctx->buf[r++] = 0x80;
+    if (r > 56) {
+        memset(&ctx->buf[r], 0, 64 - r);
+        sha256_transform(ctx->state, (const uint32_t*)ctx->buf, 1);
+        r = 0;
     }
+    memset(&ctx->buf[r], 0, 56 - r);
     be64enc(tmp, ctx->count);
     memcpy(&ctx->buf[56], tmp, 8);
-    sha256_transform(ctx->state, (uint32_t*)ctx->buf, 1);
+    sha256_transform(ctx->state, (const uint32_t*)ctx->buf, 1);
 
-    for (int i = 0; i < 8; i++) {
+    /* Output */
+    for (int i = 0; i < 8; i++)
         be32enc(&digest[i*4], ctx->state[i]);
-    }
     insecure_memzero(ctx, sizeof(*ctx));
 }
 
-/* --- Double SHA-256 --- */
+/* --- Double-SHA256 --- */
 void sha256d(uint8_t *hash, const uint8_t *data, size_t len) {
     SHA256_CTX ctx;
     uint8_t mid[32];
@@ -193,7 +194,6 @@ void HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx, const uint8_t *key, size_t keylen) {
         SHA256_Final(kh, &t);
         K = kh; keylen = 32;
     }
-
     memset(pad, 0x36, 64);
     for (size_t i = 0; i < keylen; i++) pad[i] ^= K[i];
     SHA256_Init(&ctx->ictx);
@@ -219,7 +219,9 @@ void HMAC_SHA256_Final(uint8_t dgst[32], HMAC_SHA256_CTX *ctx) {
     insecure_memzero(ih, sizeof(ih));
 }
 
-void HMAC_SHA256_Buf(const uint8_t *k, size_t kl, const uint8_t *d, size_t l, uint8_t dgst[32]) {
+void HMAC_SHA256_Buf(const uint8_t *k, size_t kl,
+                    const uint8_t *d, size_t l,
+                    uint8_t dgst[32]) {
     HMAC_SHA256_CTX ctx;
     HMAC_SHA256_Init(&ctx, k, kl);
     HMAC_SHA256_Update(&ctx, d, l);
