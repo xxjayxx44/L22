@@ -1,12 +1,7 @@
 /*
  * yespower-1.0.1/sha256.c
- * Optimized, refactored SHA-256 + double-SHA + HMAC + PBKDF2 for cpuminer
- *
- * - Single-loop RNDr compression
- * - Two-phase W-schedule generation
- * - Register-based working vars (a–h)
- * - Balanced macros, no __builtin_rotr linker issues
- * - Aligned arrays for better codegen
+ * Optimized SHA-256 + double-SHA256 + HMAC-SHA256 + PBKDF2-HMAC-SHA256
+ * Fixed to remove dependency on sysendian.h by inlining BE encode/decode.
  */
 
 #include <assert.h>
@@ -16,16 +11,43 @@
 
 #include "cpuminer-config.h"
 #include "miner.h"
-#include "sysendian.h"
 #include "insecure_memzero.h"
 
-/* Initial SHA256 state */
+/* --- Big-endian encode/decode helpers --- */
+static inline uint32_t be32dec(const uint8_t *p) {
+    return ((uint32_t)p[0] << 24)
+         | ((uint32_t)p[1] << 16)
+         | ((uint32_t)p[2] <<  8)
+         | ((uint32_t)p[3]      );
+}
+
+static inline void be32enc(uint8_t *p, uint32_t x) {
+    p[0] = (uint8_t)(x >> 24);
+    p[1] = (uint8_t)(x >> 16);
+    p[2] = (uint8_t)(x >>  8);
+    p[3] = (uint8_t) x;
+}
+
+static inline void be64enc(uint8_t *p, uint64_t x) {
+    p[0] = (uint8_t)(x >> 56);
+    p[1] = (uint8_t)(x >> 48);
+    p[2] = (uint8_t)(x >> 40);
+    p[3] = (uint8_t)(x >> 32);
+    p[4] = (uint8_t)(x >> 24);
+    p[5] = (uint8_t)(x >> 16);
+    p[6] = (uint8_t)(x >>  8);
+    p[7] = (uint8_t) x;
+}
+
+/* --- SHA-256 constants and macros --- */
+
+/* Initial hash state */
 static const uint32_t H0_IV[8] = {
     0x6A09E667UL,0xBB67AE85UL,0x3C6EF372UL,0xA54FF53AUL,
     0x510E527FUL,0x9B05688CUL,0x1F83D9ABUL,0x5BE0CD19UL
 };
 
-/* SHA256 round constants */
+/* Round constants */
 static const uint32_t K256[64] = {
     0x428a2f98UL,0x71374491UL,0xb5c0fbcfUL,0xe9b5dba5UL,
     0x3956c25bUL,0x59f111f1UL,0x923f82a4UL,0xab1c5ed5UL,
@@ -45,7 +67,7 @@ static const uint32_t K256[64] = {
     0x90befffaUL,0xa4506cebUL,0xbef9a3f7UL,0xc67178f2UL
 };
 
-/* Elementary SHA256 functions */
+/* SHA-256 bitwise functions */
 #define ROTR(x,n)   (((x) >> (n)) | ((x) << (32 - (n))))
 #define SHR(x,n)    ((x) >> (n))
 #define Ch(x,y,z)   (((x) & ((y) ^ (z))) ^ (z))
@@ -55,12 +77,7 @@ static const uint32_t K256[64] = {
 #define s0(x)       (ROTR(x, 7)  ^ ROTR(x,18) ^ SHR(x, 3))
 #define s1(x)       (ROTR(x,17)  ^ ROTR(x,19) ^ SHR(x,10))
 
-/*
- * sha256_transform:
- *   - state: 8-word chain state
- *   - block: 16-word big-endian input block
- *   - swap:  if true, byte-swap each word from host order
- */
+/* --- SHA-256 core transform --- */
 void sha256_transform(uint32_t state[8],
                       const uint32_t block[16],
                       int swap)
@@ -69,136 +86,160 @@ void sha256_transform(uint32_t state[8],
     uint32_t a,b,c,d,e,f,g,h,T1,T2;
     int i;
 
-    /* 1) Build W[0..63] */
+    /* 1) Prepare schedule */
     if (swap) {
         for (i = 0; i < 16; i++)
-            W[i] = swab32(block[i]);
+            W[i] = be32dec((const uint8_t *)&block[i]);
     } else {
-        memcpy(W, block, 16*4);
+        memcpy(W, block, 16 * 4);
     }
     for (i = 16; i < 64; i++) {
         W[i] = s1(W[i-2]) + W[i-7] + s0(W[i-15]) + W[i-16];
     }
 
-    /* 2) Initialize registers from state */
-    a = state[0];  b = state[1];  c = state[2];  d = state[3];
-    e = state[4];  f = state[5];  g = state[6];  h = state[7];
+    /* 2) Init regs */
+    a = state[0]; b = state[1]; c = state[2]; d = state[3];
+    e = state[4]; f = state[5]; g = state[6]; h = state[7];
 
     /* 3) 64 rounds */
     for (i = 0; i < 64; i++) {
         T1 = h + S1(e) + Ch(e,f,g) + K256[i] + W[i];
         T2 = S0(a) + Maj(a,b,c);
-        h = g;  g = f;  f = e;  e = d + T1;
-        d = c;  c = b;  b = a;  a = T1 + T2;
+        h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
     }
 
-    /* 4) Write back */
-    state[0] += a;  state[1] += b;  state[2] += c;  state[3] += d;
-    state[4] += e;  state[5] += f;  state[6] += g;  state[7] += h;
+    /* 4) Update state */
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
-/*
- * Double-SHA256 (sha256d) over arbitrary data length.
- * Produces a 32-byte LE hash in 'hash'.
- */
-void sha256d(uint8_t *hash,
-             const uint8_t *data,
-             size_t len)
-{
+/* --- SHA-256 wrapper API --- */
+void SHA256_Init(SHA256_CTX *ctx) {
+    ctx->count = 0;
+    memcpy(ctx->state, H0_IV, sizeof(H0_IV));
+}
+
+void SHA256_Update(SHA256_CTX *ctx, const uint8_t *data, size_t len) {
+    uint8_t tmp[8];
+    size_t r = (ctx->count >> 3) & 0x3F;
+    ctx->count += (uint64_t)len << 3;
+
+    if (r && len) {
+        size_t tofill = 64 - r;
+        if (len < tofill) {
+            memcpy(&ctx->buf[r], data, len);
+            return;
+        }
+        memcpy(&ctx->buf[r], data, tofill);
+        sha256_transform(ctx->state, (uint32_t*)ctx->buf, 1);
+        data += tofill; len -= tofill;
+    }
+    while (len >= 64) {
+        sha256_transform(ctx->state, (uint32_t*)data, 1);
+        data += 64; len -= 64;
+    }
+    if (len) {
+        memcpy(ctx->buf, data, len);
+    }
+}
+
+void SHA256_Final(uint8_t digest[32], SHA256_CTX *ctx) {
+    uint8_t tmp[8];
+    size_t r = (ctx->count >> 3) & 0x3F;
+
+    if (r < 56) {
+        memset(&ctx->buf[r], 0x80, 1);
+        memset(&ctx->buf[r+1], 0, 55-r);
+    } else {
+        memset(&ctx->buf[r], 0x80, 1);
+        memset(&ctx->buf[r+1], 0, 63-r);
+        sha256_transform(ctx->state, (uint32_t*)ctx->buf, 1);
+        memset(ctx->buf, 0, 56);
+    }
+    be64enc(tmp, ctx->count);
+    memcpy(&ctx->buf[56], tmp, 8);
+    sha256_transform(ctx->state, (uint32_t*)ctx->buf, 1);
+
+    for (int i = 0; i < 8; i++) {
+        be32enc(&digest[i*4], ctx->state[i]);
+    }
+    insecure_memzero(ctx, sizeof(*ctx));
+}
+
+/* --- Double SHA-256 --- */
+void sha256d(uint8_t *hash, const uint8_t *data, size_t len) {
     SHA256_CTX ctx;
     uint8_t mid[32];
 
-    /* First pass */
     SHA256_Init(&ctx);
     SHA256_Update(&ctx, data, len);
     SHA256_Final(mid, &ctx);
 
-    /* Second pass */
     SHA256_Init(&ctx);
     SHA256_Update(&ctx, mid, 32);
     SHA256_Final(hash, &ctx);
 }
 
-/* HMAC-SHA256 and PBKDF2 follow the usual reference implementations */
-void HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx,
-                     const uint8_t *key,
-                     size_t keylen)
-{
-    uint8_t pad[64], khash[32];
+/* --- HMAC-SHA256 --- */
+void HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx, const uint8_t *key, size_t keylen) {
+    uint8_t pad[64], kh[32];
     const uint8_t *K = key;
 
     if (keylen > 64) {
         SHA256_CTX t;
         SHA256_Init(&t);
         SHA256_Update(&t, key, keylen);
-        SHA256_Final(khash, &t);
-        K = khash; keylen = 32;
+        SHA256_Final(kh, &t);
+        K = kh; keylen = 32;
     }
 
-    /* Inner */
-    SHA256_Init(&ctx->ictx);
     memset(pad, 0x36, 64);
     for (size_t i = 0; i < keylen; i++) pad[i] ^= K[i];
+    SHA256_Init(&ctx->ictx);
     SHA256_Update(&ctx->ictx, pad, 64);
 
-    /* Outer */
-    SHA256_Init(&ctx->octx);
     memset(pad, 0x5c, 64);
     for (size_t i = 0; i < keylen; i++) pad[i] ^= K[i];
+    SHA256_Init(&ctx->octx);
     SHA256_Update(&ctx->octx, pad, 64);
 
-    insecure_memzero(khash, sizeof(khash));
+    insecure_memzero(kh, sizeof(kh));
 }
 
-void HMAC_SHA256_Update(HMAC_SHA256_CTX *ctx,
-                       const uint8_t *data,
-                       size_t len)
-{
-    SHA256_Update(&ctx->ictx, data, len);
+void HMAC_SHA256_Update(HMAC_SHA256_CTX *ctx, const uint8_t *d, size_t l) {
+    SHA256_Update(&ctx->ictx, d, l);
 }
 
-void HMAC_SHA256_Final(uint8_t digest[32],
-                      HMAC_SHA256_CTX *ctx)
-{
+void HMAC_SHA256_Final(uint8_t dgst[32], HMAC_SHA256_CTX *ctx) {
     uint8_t ih[32];
     SHA256_Final(ih, &ctx->ictx);
     SHA256_Update(&ctx->octx, ih, 32);
-    SHA256_Final(digest, &ctx->octx);
+    SHA256_Final(dgst, &ctx->octx);
     insecure_memzero(ih, sizeof(ih));
 }
 
-void HMAC_SHA256_Buf(const uint8_t *key, size_t keylen,
-                    const uint8_t *data, size_t len,
-                    uint8_t digest[32])
-{
+void HMAC_SHA256_Buf(const uint8_t *k, size_t kl, const uint8_t *d, size_t l, uint8_t dgst[32]) {
     HMAC_SHA256_CTX ctx;
-    HMAC_SHA256_Init(&ctx, key, keylen);
-    HMAC_SHA256_Update(&ctx, data, len);
-    HMAC_SHA256_Final(digest, &ctx);
+    HMAC_SHA256_Init(&ctx, k, kl);
+    HMAC_SHA256_Update(&ctx, d, l);
+    HMAC_SHA256_Final(dgst, &ctx);
 }
 
-/*
- * PBKDF2-HMAC-SHA256
- */
-void PBKDF2_SHA256(const uint8_t *passwd,
-                   size_t passwdlen,
-                   const uint8_t *salt,
-                   size_t saltlen,
-                   uint64_t c,
-                   uint8_t *out,
-                   size_t outlen)
-{
+/* --- PBKDF2-HMAC-SHA256 --- */
+void PBKDF2_SHA256(const uint8_t *pw, size_t pwl,
+                   const uint8_t *salt, size_t saltl,
+                   uint64_t c, uint8_t *out, size_t outl) {
     HMAC_SHA256_CTX Ph, PSh, hctx;
     uint8_t U[32], T[32], ivec[4];
-    assert(outlen <= 32*(size_t)UINT32_MAX);
+    assert(outl <= 32 * (size_t)UINT32_MAX);
 
-    /* Precompute inner+salt context */
-    HMAC_SHA256_Init(&Ph, passwd, passwdlen);
+    HMAC_SHA256_Init(&Ph, pw, pwl);
     memcpy(&PSh, &Ph, sizeof(Ph));
-    HMAC_SHA256_Update(&PSh, salt, saltlen);
+    HMAC_SHA256_Update(&PSh, salt, saltl);
 
-    for (size_t i = 0; i * 32 < outlen; i++) {
-        uint32_t idx = (uint32_t)(i+1);
+    for (size_t i = 0; i * 32 < outl; i++) {
+        uint32_t idx = (uint32_t)(i + 1);
         be32enc(ivec, idx);
 
         memcpy(&hctx, &PSh, sizeof(hctx));
@@ -207,16 +248,15 @@ void PBKDF2_SHA256(const uint8_t *passwd,
         memcpy(T, U, 32);
 
         for (uint64_t j = 2; j <= c; j++) {
-            HMAC_SHA256_Init(&hctx, passwd, passwdlen);
+            HMAC_SHA256_Init(&hctx, pw, pwl);
             HMAC_SHA256_Update(&hctx, U, 32);
             HMAC_SHA256_Final(U, &hctx);
-            for (int k = 0; k < 32; k++)
-                T[k] ^= U[k];
+            for (int k = 0; k < 32; k++) T[k] ^= U[k];
         }
 
-        size_t chunk = outlen - i*32;
+        size_t chunk = outl - i * 32;
         if (chunk > 32) chunk = 32;
-        memcpy(out + i*32, T, chunk);
+        memcpy(out + i * 32, T, chunk);
     }
 
     insecure_memzero(&Ph, sizeof(Ph));
