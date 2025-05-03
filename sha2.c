@@ -58,22 +58,27 @@ void sha256_init(uint32_t state[8]) {
     memcpy(state, H0, 8*sizeof(uint32_t));
 }
 
+// Matches miner.h signature: block is uint32_t[16]
 void sha256_transform(uint32_t state[8], const uint32_t block[16], int swap) {
     uint32_t W[64] __attribute__((aligned(64)));
     uint32_t a,b,c,d,e,f,g,h;
     int t;
+
     // Message schedule
     for (t = 0; t < 16; t++) {
-        uint32_t w = swap ? __builtin_bswap32(block[t]) : block[t];
-        W[t] = w;
+        W[t] = swap
+             ? __builtin_bswap32(block[t])
+             : block[t];
     }
     for (t = 16; t < 64; t++) {
         W[t] = s1(W[t-2]) + W[t-7] + s0(W[t-15]) + W[t-16];
     }
+
     // Initialize
     a=state[0]; b=state[1]; c=state[2]; d=state[3];
     e=state[4]; f=state[5]; g=state[6]; h=state[7];
-    // 64 rounds (unrolled by 8)
+
+    // 64 rounds unrolled by 8
     for (t = 0; t < 64; t += 8) {
         #define ROUND(i) do { \
             uint32_t T1 = h + S1(e) + Ch(e,f,g) + K[i] + W[i]; \
@@ -84,6 +89,7 @@ void sha256_transform(uint32_t state[8], const uint32_t block[16], int swap) {
         ROUND(t+4); ROUND(t+5); ROUND(t+6); ROUND(t+7);
         #undef ROUND
     }
+
     // Update state
     state[0]+=a; state[1]+=b; state[2]+=c; state[3]+=d;
     state[4]+=e; state[5]+=f; state[6]+=g; state[7]+=h;
@@ -95,34 +101,49 @@ void sha256d(unsigned char *out, const unsigned char *data, int len) {
     int i, r;
     uint64_t bits;
 
-    // First pass
+    // First pass: process full 64-byte chunks
     sha256_init(state);
-    for (i = 0; i+64 <= len; i += 64)
-        sha256_transform(state, (const uint32_t*)(data+i), 1);
+    for (i = 0; i + 64 <= len; i += 64) {
+        // load chunk into block-aligned uint32_t[16]
+        for (int t = 0; t < 16; t++) {
+            uint32_t w;
+            memcpy(&w, data + i + 4*t, 4);
+            block[4*t+0] = ((w >> 24) & 0xFF);
+            block[4*t+1] = ((w >> 16) & 0xFF);
+            block[4*t+2] = ((w >>  8) & 0xFF);
+            block[4*t+3] = ((w >>  0) & 0xFF);
+        }
+        sha256_transform(state, (const uint32_t*)block, 1);
+    }
+
     // Padding
     r = len - i;
-    memcpy(block, data+i, r);
+    memcpy(block, data + i, r);
     block[r] = 0x80;
     if (r >= 56) {
-        memset(block+r+1, 0, 63-r);
+        memset(block + r + 1, 0, 63 - r);
         sha256_transform(state, (const uint32_t*)block, 0);
         memset(block, 0, 56);
     } else {
-        memset(block+r+1, 0, 55-r);
+        memset(block + r + 1, 0, 55 - r);
     }
     bits = __builtin_bswap64((uint64_t)len << 3);
-    memcpy(block+56, &bits, 8);
+    memcpy(block + 56, &bits, 8);
     sha256_transform(state, (const uint32_t*)block, 0);
 
-    // Prepare second-pass buffer
-    for (i = 0; i < 8; i++) tmp[i] = state[i];
-    for (; i < 16; i++) tmp[i] = PD[i-8];
+    // Prepare second-pass buffer: midstate + padding constants
+    for (i = 0; i < 8; i++) {
+        tmp[i] = state[i];
+    }
+    for (; i < 16; i++) {
+        tmp[i] = PD[i - 8];
+    }
 
     // Second pass
     sha256_init(state);
     sha256_transform(state, tmp, 0);
 
-    // Write output
+    // Write output in big-endian
     for (i = 0; i < 8; i++) {
         uint32_t w = __builtin_bswap32(state[i]);
         memcpy(out + 4*i, &w, 4);
