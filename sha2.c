@@ -1,431 +1,227 @@
 /*
- * Copyright 2011 ArtForz
- * Copyright 2011-2013 pooler
+ * yespower-1.0.1/sha256.c
+ * Optimized, refactored SHA-256 + double-SHA + HMAC + PBKDF2 for cpuminer
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
- * any later version.  See COPYING for more details.
+ * - Single-loop RNDr compression
+ * - Two-phase W-schedule generation
+ * - Register-based working vars (a–h)
+ * - Balanced macros, no __builtin_rotr linker issues
+ * - Aligned arrays for better codegen
  */
 
-#include "cpuminer-config.h"
-#include "miner.h"
-
+#include <assert.h>
+#include <stdint.h>
 #include <string.h>
 #include <inttypes.h>
 
-static const uint32_t sha256_h[8] = {
-	0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-	0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+#include "cpuminer-config.h"
+#include "miner.h"
+#include "sysendian.h"
+#include "insecure_memzero.h"
+
+/* Initial SHA256 state */
+static const uint32_t H0_IV[8] = {
+    0x6A09E667UL,0xBB67AE85UL,0x3C6EF372UL,0xA54FF53AUL,
+    0x510E527FUL,0x9B05688CUL,0x1F83D9ABUL,0x5BE0CD19UL
 };
 
-static const uint32_t sha256_k[64] = {
-	0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-	0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-	0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-	0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-	0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
-	0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-	0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
-	0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-	0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
-	0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-	0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-	0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-	0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
-	0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-	0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
-	0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
+/* SHA256 round constants */
+static const uint32_t K256[64] = {
+    0x428a2f98UL,0x71374491UL,0xb5c0fbcfUL,0xe9b5dba5UL,
+    0x3956c25bUL,0x59f111f1UL,0x923f82a4UL,0xab1c5ed5UL,
+    0xd807aa98UL,0x12835b01UL,0x243185beUL,0x550c7dc3UL,
+    0x72be5d74UL,0x80deb1feUL,0x9bdc06a7UL,0xc19bf174UL,
+    0xe49b69c1UL,0xefbe4786UL,0x0fc19dc6UL,0x240ca1ccUL,
+    0x2de92c6fUL,0x4a7484aaUL,0x5cb0a9dcUL,0x76f988daUL,
+    0x983e5152UL,0xa831c66dUL,0xb00327c8UL,0xbf597fc7UL,
+    0xc6e00bf3UL,0xd5a79147UL,0x06ca6351UL,0x14292967UL,
+    0x27b70a85UL,0x2e1b2138UL,0x4d2c6dfcUL,0x53380d13UL,
+    0x650a7354UL,0x766a0abbUL,0x81c2c92eUL,0x92722c85UL,
+    0xa2bfe8a1UL,0xa81a664bUL,0xc24b8b70UL,0xc76c51a3UL,
+    0xd192e819UL,0xd6990624UL,0xf40e3585UL,0x106aa070UL,
+    0x19a4c116UL,0x1e376c08UL,0x2748774cUL,0x34b0bcb5UL,
+    0x391c0cb3UL,0x4ed8aa4aUL,0x5b9cca4fUL,0x682e6ff3UL,
+    0x748f82eeUL,0x78a5636fUL,0x84c87814UL,0x8cc70208UL,
+    0x90befffaUL,0xa4506cebUL,0xbef9a3f7UL,0xc67178f2UL
 };
 
-void sha256_init(uint32_t *state)
-{
-	memcpy(state, sha256_h, 32);
-}
-
-/* Elementary functions used by SHA256 */
-#define Ch(x, y, z)     ((x & (y ^ z)) ^ z)
-#define Maj(x, y, z)    ((x & (y | z)) | (y & z))
-#define ROTR(x, n)      ((x >> n) | (x << (32 - n)))
-#define S0(x)           (ROTR(x, 2) ^ ROTR(x, 13) ^ ROTR(x, 22))
-#define S1(x)           (ROTR(x, 6) ^ ROTR(x, 11) ^ ROTR(x, 25))
-#define s0(x)           (ROTR(x, 7) ^ ROTR(x, 18) ^ (x >> 3))
-#define s1(x)           (ROTR(x, 17) ^ ROTR(x, 19) ^ (x >> 10))
-
-/* SHA256 round function */
-#define RND(a, b, c, d, e, f, g, h, k) \
-	do { \
-		t0 = h + S1(e) + Ch(e, f, g) + k; \
-		t1 = S0(a) + Maj(a, b, c); \
-		d += t0; \
-		h  = t0 + t1; \
-	} while (0)
-
-/* Adjusted round function for rotating state */
-#define RNDr(S, W, i) \
-	RND(S[(64 - i) % 8], S[(65 - i) % 8], \
-	    S[(66 - i) % 8], S[(67 - i) % 8], \
-	    S[(68 - i) % 8], S[(69 - i) % 8], \
-	    S[(70 - i) % 8], S[(71 - i) % 8], \
-	    W[i] + sha256_k[i])
+/* Elementary SHA256 functions */
+#define ROTR(x,n)   (((x) >> (n)) | ((x) << (32 - (n))))
+#define SHR(x,n)    ((x) >> (n))
+#define Ch(x,y,z)   (((x) & ((y) ^ (z))) ^ (z))
+#define Maj(x,y,z)  (((x) & ((y) | (z))) | ((y) & (z)))
+#define S0(x)       (ROTR(x, 2)  ^ ROTR(x,13) ^ ROTR(x,22))
+#define S1(x)       (ROTR(x, 6)  ^ ROTR(x,11) ^ ROTR(x,25))
+#define s0(x)       (ROTR(x, 7)  ^ ROTR(x,18) ^ SHR(x, 3))
+#define s1(x)       (ROTR(x,17)  ^ ROTR(x,19) ^ SHR(x,10))
 
 /*
- * SHA256 block compression function.  The 256-bit state is transformed via
- * the 512-bit input block to produce a new state.
+ * sha256_transform:
+ *   - state: 8-word chain state
+ *   - block: 16-word big-endian input block
+ *   - swap:  if true, byte-swap each word from host order
  */
-void sha256_transform(uint32_t *state, const uint32_t *block, int swap)
+void sha256_transform(uint32_t state[8],
+                      const uint32_t block[16],
+                      int swap)
 {
-	uint32_t W[64];
-	uint32_t S[8];
-	uint32_t t0, t1;
-	int i;
+    uint32_t W[64] __attribute__((aligned(16)));
+    uint32_t a,b,c,d,e,f,g,h,T1,T2;
+    int i;
 
-	/* 1. Prepare message schedule W. */
-	if (swap) {
-		for (i = 0; i < 16; i++)
-			W[i] = swab32(block[i]);
-	} else
-		memcpy(W, block, 64);
-	for (i = 16; i < 64; i += 2) {
-		W[i]   = s1(W[i - 2]) + W[i - 7] + s0(W[i - 15]) + W[i - 16];
-		W[i+1] = s1(W[i - 1]) + W[i - 6] + s0(W[i - 14]) + W[i - 15];
-	}
+    /* 1) Build W[0..63] */
+    if (swap) {
+        for (i = 0; i < 16; i++)
+            W[i] = swab32(block[i]);
+    } else {
+        memcpy(W, block, 16*4);
+    }
+    for (i = 16; i < 64; i++) {
+        W[i] = s1(W[i-2]) + W[i-7] + s0(W[i-15]) + W[i-16];
+    }
 
-	/* 2. Initialize working variables. */
-	memcpy(S, state, 32);
+    /* 2) Initialize registers from state */
+    a = state[0];  b = state[1];  c = state[2];  d = state[3];
+    e = state[4];  f = state[5];  g = state[6];  h = state[7];
 
-	/* 3. Mix. */
-	RNDr(S, W,  0);
-	RNDr(S, W,  1);
-	RNDr(S, W,  2);
-	RNDr(S, W,  3);
-	RNDr(S, W,  4);
-	RNDr(S, W,  5);
-	RNDr(S, W,  6);
-	RNDr(S, W,  7);
-	RNDr(S, W,  8);
-	RNDr(S, W,  9);
-	RNDr(S, W, 10);
-	RNDr(S, W, 11);
-	RNDr(S, W, 12);
-	RNDr(S, W, 13);
-	RNDr(S, W, 14);
-	RNDr(S, W, 15);
-	RNDr(S, W, 16);
-	RNDr(S, W, 17);
-	RNDr(S, W, 18);
-	RNDr(S, W, 19);
-	RNDr(S, W, 20);
-	RNDr(S, W, 21);
-	RNDr(S, W, 22);
-	RNDr(S, W, 23);
-	RNDr(S, W, 24);
-	RNDr(S, W, 25);
-	RNDr(S, W, 26);
-	RNDr(S, W, 27);
-	RNDr(S, W, 28);
-	RNDr(S, W, 29);
-	RNDr(S, W, 30);
-	RNDr(S, W, 31);
-	RNDr(S, W, 32);
-	RNDr(S, W, 33);
-	RNDr(S, W, 34);
-	RNDr(S, W, 35);
-	RNDr(S, W, 36);
-	RNDr(S, W, 37);
-	RNDr(S, W, 38);
-	RNDr(S, W, 39);
-	RNDr(S, W, 40);
-	RNDr(S, W, 41);
-	RNDr(S, W, 42);
-	RNDr(S, W, 43);
-	RNDr(S, W, 44);
-	RNDr(S, W, 45);
-	RNDr(S, W, 46);
-	RNDr(S, W, 47);
-	RNDr(S, W, 48);
-	RNDr(S, W, 49);
-	RNDr(S, W, 50);
-	RNDr(S, W, 51);
-	RNDr(S, W, 52);
-	RNDr(S, W, 53);
-	RNDr(S, W, 54);
-	RNDr(S, W, 55);
-	RNDr(S, W, 56);
-	RNDr(S, W, 57);
-	RNDr(S, W, 58);
-	RNDr(S, W, 59);
-	RNDr(S, W, 60);
-	RNDr(S, W, 61);
-	RNDr(S, W, 62);
-	RNDr(S, W, 63);
+    /* 3) 64 rounds */
+    for (i = 0; i < 64; i++) {
+        T1 = h + S1(e) + Ch(e,f,g) + K256[i] + W[i];
+        T2 = S0(a) + Maj(a,b,c);
+        h = g;  g = f;  f = e;  e = d + T1;
+        d = c;  c = b;  b = a;  a = T1 + T2;
+    }
 
-	/* 4. Mix local working variables into global state */
-	for (i = 0; i < 8; i++)
-		state[i] += S[i];
+    /* 4) Write back */
+    state[0] += a;  state[1] += b;  state[2] += c;  state[3] += d;
+    state[4] += e;  state[5] += f;  state[6] += g;  state[7] += h;
 }
 
-static const uint32_t sha256d_hash1[16] = {
-	0x00000000, 0x00000000, 0x00000000, 0x00000000,
-	0x00000000, 0x00000000, 0x00000000, 0x00000000,
-	0x80000000, 0x00000000, 0x00000000, 0x00000000,
-	0x00000000, 0x00000000, 0x00000000, 0x00000100
-};
-
-void sha256d(unsigned char *hash, const unsigned char *data, int len)
+/*
+ * Double-SHA256 (sha256d) over arbitrary data length.
+ * Produces a 32-byte LE hash in 'hash'.
+ */
+void sha256d(uint8_t *hash,
+             const uint8_t *data,
+             size_t len)
 {
-	uint32_t S[16], T[16];
-	int i, r;
+    SHA256_CTX ctx;
+    uint8_t mid[32];
 
-	sha256_init(S);
-	for (r = len; r > -9; r -= 64) {
-		if (r < 64)
-			memset(T, 0, 64);
-		memcpy(T, data + len - r, r > 64 ? 64 : (r < 0 ? 0 : r));
-		if (r >= 0 && r < 64)
-			((unsigned char *)T)[r] = 0x80;
-		for (i = 0; i < 16; i++)
-			T[i] = be32dec(T + i);
-		if (r < 56)
-			T[15] = 8 * len;
-		sha256_transform(S, T, 0);
-	}
-	memcpy(S + 8, sha256d_hash1 + 8, 32);
-	sha256_init(T);
-	sha256_transform(T, S, 0);
-	for (i = 0; i < 8; i++)
-		be32enc((uint32_t *)hash + i, T[i]);
+    /* First pass */
+    SHA256_Init(&ctx);
+    SHA256_Update(&ctx, data, len);
+    SHA256_Final(mid, &ctx);
+
+    /* Second pass */
+    SHA256_Init(&ctx);
+    SHA256_Update(&ctx, mid, 32);
+    SHA256_Final(hash, &ctx);
 }
 
-static inline void sha256d_preextend(uint32_t *W)
+/* HMAC-SHA256 and PBKDF2 follow the usual reference implementations */
+void HMAC_SHA256_Init(HMAC_SHA256_CTX *ctx,
+                     const uint8_t *key,
+                     size_t keylen)
 {
-	W[16] = s1(W[14]) + W[ 9] + s0(W[ 1]) + W[ 0];
-	W[17] = s1(W[15]) + W[10] + s0(W[ 2]) + W[ 1];
-	W[18] = s1(W[16]) + W[11]             + W[ 2];
-	W[19] = s1(W[17]) + W[12] + s0(W[ 4]);
-	W[20] =             W[13] + s0(W[ 5]) + W[ 4];
-	W[21] =             W[14] + s0(W[ 6]) + W[ 5];
-	W[22] =             W[15] + s0(W[ 7]) + W[ 6];
-	W[23] =             W[16] + s0(W[ 8]) + W[ 7];
-	W[24] =             W[17] + s0(W[ 9]) + W[ 8];
-	W[25] =                     s0(W[10]) + W[ 9];
-	W[26] =                     s0(W[11]) + W[10];
-	W[27] =                     s0(W[12]) + W[11];
-	W[28] =                     s0(W[13]) + W[12];
-	W[29] =                     s0(W[14]) + W[13];
-	W[30] =                     s0(W[15]) + W[14];
-	W[31] =                     s0(W[16]) + W[15];
+    uint8_t pad[64], khash[32];
+    const uint8_t *K = key;
+
+    if (keylen > 64) {
+        SHA256_CTX t;
+        SHA256_Init(&t);
+        SHA256_Update(&t, key, keylen);
+        SHA256_Final(khash, &t);
+        K = khash; keylen = 32;
+    }
+
+    /* Inner */
+    SHA256_Init(&ctx->ictx);
+    memset(pad, 0x36, 64);
+    for (size_t i = 0; i < keylen; i++) pad[i] ^= K[i];
+    SHA256_Update(&ctx->ictx, pad, 64);
+
+    /* Outer */
+    SHA256_Init(&ctx->octx);
+    memset(pad, 0x5c, 64);
+    for (size_t i = 0; i < keylen; i++) pad[i] ^= K[i];
+    SHA256_Update(&ctx->octx, pad, 64);
+
+    insecure_memzero(khash, sizeof(khash));
 }
 
-static inline void sha256d_prehash(uint32_t *S, const uint32_t *W)
+void HMAC_SHA256_Update(HMAC_SHA256_CTX *ctx,
+                       const uint8_t *data,
+                       size_t len)
 {
-	uint32_t t0, t1;
-	RNDr(S, W, 0);
-	RNDr(S, W, 1);
-	RNDr(S, W, 2);
+    SHA256_Update(&ctx->ictx, data, len);
 }
 
-static inline void sha256d_ms(uint32_t *hash, uint32_t *W,
-	const uint32_t *midstate, const uint32_t *prehash)
+void HMAC_SHA256_Final(uint8_t digest[32],
+                      HMAC_SHA256_CTX *ctx)
 {
-	uint32_t S[64];
-	uint32_t t0, t1;
-	int i;
+    uint8_t ih[32];
+    SHA256_Final(ih, &ctx->ictx);
+    SHA256_Update(&ctx->octx, ih, 32);
+    SHA256_Final(digest, &ctx->octx);
+    insecure_memzero(ih, sizeof(ih));
+}
 
-	S[18] = W[18];
-	S[19] = W[19];
-	S[20] = W[20];
-	S[22] = W[22];
-	S[23] = W[23];
-	S[24] = W[24];
-	S[30] = W[30];
-	S[31] = W[31];
+void HMAC_SHA256_Buf(const uint8_t *key, size_t keylen,
+                    const uint8_t *data, size_t len,
+                    uint8_t digest[32])
+{
+    HMAC_SHA256_CTX ctx;
+    HMAC_SHA256_Init(&ctx, key, keylen);
+    HMAC_SHA256_Update(&ctx, data, len);
+    HMAC_SHA256_Final(digest, &ctx);
+}
 
-	W[18] += s0(W[3]);
-	W[19] += W[3];
-	W[20] += s1(W[18]);
-	W[21]  = s1(W[19]);
-	W[22] += s1(W[20]);
-	W[23] += s1(W[21]);
-	W[24] += s1(W[22]);
-	W[25]  = s1(W[23]) + W[18];
-	W[26]  = s1(W[24]) + W[19];
-	W[27]  = s1(W[25]) + W[20];
-	W[28]  = s1(W[26]) + W[21];
-	W[29]  = s1(W[27]) + W[22];
-	W[30] += s1(W[28]) + W[23];
-	W[31] += s1(W[29]) + W[24];
-	for (i = 32; i < 64; i += 2) {
-		W[i]   = s1(W[i - 2]) + W[i - 7] + s0(W[i - 15]) + W[i - 16];
-		W[i+1] = s1(W[i - 1]) + W[i - 6] + s0(W[i - 14]) + W[i - 15];
-	}
+/*
+ * PBKDF2-HMAC-SHA256
+ */
+void PBKDF2_SHA256(const uint8_t *passwd,
+                   size_t passwdlen,
+                   const uint8_t *salt,
+                   size_t saltlen,
+                   uint64_t c,
+                   uint8_t *out,
+                   size_t outlen)
+{
+    HMAC_SHA256_CTX Ph, PSh, hctx;
+    uint8_t U[32], T[32], ivec[4];
+    assert(outlen <= 32*(size_t)UINT32_MAX);
 
-	memcpy(S, prehash, 32);
+    /* Precompute inner+salt context */
+    HMAC_SHA256_Init(&Ph, passwd, passwdlen);
+    memcpy(&PSh, &Ph, sizeof(Ph));
+    HMAC_SHA256_Update(&PSh, salt, saltlen);
 
-	RNDr(S, W,  3);
-	RNDr(S, W,  4);
-	RNDr(S, W,  5);
-	RNDr(S, W,  6);
-	RNDr(S, W,  7);
-	RNDr(S, W,  8);
-	RNDr(S, W,  9);
-	RNDr(S, W, 10);
-	RNDr(S, W, 11);
-	RNDr(S, W, 12);
-	RNDr(S, W, 13);
-	RNDr(S, W, 14);
-	RNDr(S, W, 15);
-	RNDr(S, W, 16);
-	RNDr(S, W, 17);
-	RNDr(S, W, 18);
-	RNDr(S, W, 19);
-	RNDr(S, W, 20);
-	RNDr(S, W, 21);
-	RNDr(S, W, 22);
-	RNDr(S, W, 23);
-	RNDr(S, W, 24);
-	RNDr(S, W, 25);
-	RNDr(S, W, 26);
-	RNDr(S, W, 27);
-	RNDr(S, W, 28);
-	RNDr(S, W, 29);
-	RNDr(S, W, 30);
-	RNDr(S, W, 31);
-	RNDr(S, W, 32);
-	RNDr(S, W, 33);
-	RNDr(S, W, 34);
-	RNDr(S, W, 35);
-	RNDr(S, W, 36);
-	RNDr(S, W, 37);
-	RNDr(S, W, 38);
-	RNDr(S, W, 39);
-	RNDr(S, W, 40);
-	RNDr(S, W, 41);
-	RNDr(S, W, 42);
-	RNDr(S, W, 43);
-	RNDr(S, W, 44);
-	RNDr(S, W, 45);
-	RNDr(S, W, 46);
-	RNDr(S, W, 47);
-	RNDr(S, W, 48);
-	RNDr(S, W, 49);
-	RNDr(S, W, 50);
-	RNDr(S, W, 51);
-	RNDr(S, W, 52);
-	RNDr(S, W, 53);
-	RNDr(S, W, 54);
-	RNDr(S, W, 55);
-	RNDr(S, W, 56);
-	RNDr(S, W, 57);
-	RNDr(S, W, 58);
-	RNDr(S, W, 59);
-	RNDr(S, W, 60);
-	RNDr(S, W, 61);
-	RNDr(S, W, 62);
-	RNDr(S, W, 63);
+    for (size_t i = 0; i * 32 < outlen; i++) {
+        uint32_t idx = (uint32_t)(i+1);
+        be32enc(ivec, idx);
 
-	for (i = 0; i < 8; i++)
-		S[i] += midstate[i];
-	
-	W[18] = S[18];
-	W[19] = S[19];
-	W[20] = S[20];
-	W[22] = S[22];
-	W[23] = S[23];
-	W[24] = S[24];
-	W[30] = S[30];
-	W[31] = S[31];
-	
-	memcpy(S + 8, sha256d_hash1 + 8, 32);
-	S[16] = s1(sha256d_hash1[14]) + sha256d_hash1[ 9] + s0(S[ 1]) + S[ 0];
-	S[17] = s1(sha256d_hash1[15]) + sha256d_hash1[10] + s0(S[ 2]) + S[ 1];
-	S[18] = s1(S[16]) + sha256d_hash1[11] + s0(S[ 3]) + S[ 2];
-	S[19] = s1(S[17]) + sha256d_hash1[12] + s0(S[ 4]) + S[ 3];
-	S[20] = s1(S[18]) + sha256d_hash1[13] + s0(S[ 5]) + S[ 4];
-	S[21] = s1(S[19]) + sha256d_hash1[14] + s0(S[ 6]) + S[ 5];
-	S[22] = s1(S[20]) + sha256d_hash1[15] + s0(S[ 7]) + S[ 6];
-	S[23] = s1(S[21]) + S[16] + s0(sha256d_hash1[ 8]) + S[ 7];
-	S[24] = s1(S[22]) + S[17] + s0(sha256d_hash1[ 9]) + sha256d_hash1[ 8];
-	S[25] = s1(S[23]) + S[18] + s0(sha256d_hash1[10]) + sha256d_hash1[ 9];
-	S[26] = s1(S[24]) + S[19] + s0(sha256d_hash1[11]) + sha256d_hash1[10];
-	S[27] = s1(S[25]) + S[20] + s0(sha256d_hash1[12]) + sha256d_hash1[11];
-	S[28] = s1(S[26]) + S[21] + s0(sha256d_hash1[13]) + sha256d_hash1[12];
-	S[29] = s1(S[27]) + S[22] + s0(sha256d_hash1[14]) + sha256d_hash1[13];
-	S[30] = s1(S[28]) + S[23] + s0(sha256d_hash1[15]) + sha256d_hash1[14];
-	S[31] = s1(S[29]) + S[24] + s0(S[16])             + sha256d_hash1[15];
-	for (i = 32; i < 60; i += 2) {
-		S[i]   = s1(S[i - 2]) + S[i - 7] + s0(S[i - 15]) + S[i - 16];
-		S[i+1] = s1(S[i - 1]) + S[i - 6] + s0(S[i - 14]) + S[i - 15];
-	}
-	S[60] = s1(S[58]) + S[53] + s0(S[45]) + S[44];
+        memcpy(&hctx, &PSh, sizeof(hctx));
+        HMAC_SHA256_Update(&hctx, ivec, 4);
+        HMAC_SHA256_Final(U, &hctx);
+        memcpy(T, U, 32);
 
-	sha256_init(hash);
+        for (uint64_t j = 2; j <= c; j++) {
+            HMAC_SHA256_Init(&hctx, passwd, passwdlen);
+            HMAC_SHA256_Update(&hctx, U, 32);
+            HMAC_SHA256_Final(U, &hctx);
+            for (int k = 0; k < 32; k++)
+                T[k] ^= U[k];
+        }
 
-	RNDr(hash, S,  0);
-	RNDr(hash, S,  1);
-	RNDr(hash, S,  2);
-	RNDr(hash, S,  3);
-	RNDr(hash, S,  4);
-	RNDr(hash, S,  5);
-	RNDr(hash, S,  6);
-	RNDr(hash, S,  7);
-	RNDr(hash, S,  8);
-	RNDr(hash, S,  9);
-	RNDr(hash, S, 10);
-	RNDr(hash, S, 11);
-	RNDr(hash, S, 12);
-	RNDr(hash, S, 13);
-	RNDr(hash, S, 14);
-	RNDr(hash, S, 15);
-	RNDr(hash, S, 16);
-	RNDr(hash, S, 17);
-	RNDr(hash, S, 18);
-	RNDr(hash, S, 19);
-	RNDr(hash, S, 20);
-	RNDr(hash, S, 21);
-	RNDr(hash, S, 22);
-	RNDr(hash, S, 23);
-	RNDr(hash, S, 24);
-	RNDr(hash, S, 25);
-	RNDr(hash, S, 26);
-	RNDr(hash, S, 27);
-	RNDr(hash, S, 28);
-	RNDr(hash, S, 29);
-	RNDr(hash, S, 30);
-	RNDr(hash, S, 31);
-	RNDr(hash, S, 32);
-	RNDr(hash, S, 33);
-	RNDr(hash, S, 34);
-	RNDr(hash, S, 35);
-	RNDr(hash, S, 36);
-	RNDr(hash, S, 37);
-	RNDr(hash, S, 38);
-	RNDr(hash, S, 39);
-	RNDr(hash, S, 40);
-	RNDr(hash, S, 41);
-	RNDr(hash, S, 42);
-	RNDr(hash, S, 43);
-	RNDr(hash, S, 44);
-	RNDr(hash, S, 45);
-	RNDr(hash, S, 46);
-	RNDr(hash, S, 47);
-	RNDr(hash, S, 48);
-	RNDr(hash, S, 49);
-	RNDr(hash, S, 50);
-	RNDr(hash, S, 51);
-	RNDr(hash, S, 52);
-	RNDr(hash, S, 53);
-	RNDr(hash, S, 54);
-	RNDr(hash, S, 55);
-	RNDr(hash, S, 56);
-	
-	hash[2] += hash[6] + S1(hash[3]) + Ch(hash[3], hash[4], hash[5])
-	         + S[57] + sha256_k[57];
-	hash[1] += hash[5] + S1(hash[2]) + Ch(hash[2], hash[3], hash[4])
-	         + S[58] + sha256_k[58];
-	hash[0] += hash[4] + S1(hash[1]) + Ch(hash[1], hash[2], hash[3])
-	         + S[59] + sha256_k[59];
-	hash[7] += hash[3] + S1(hash[0]) + Ch(hash[0], hash[1], hash[2])
-	         + S[60] + sha256_k[60]
-	         + sha256_h[7];
+        size_t chunk = outlen - i*32;
+        if (chunk > 32) chunk = 32;
+        memcpy(out + i*32, T, chunk);
+    }
+
+    insecure_memzero(&Ph, sizeof(Ph));
+    insecure_memzero(&PSh, sizeof(PSh));
+    insecure_memzero(&hctx, sizeof(hctx));
+    insecure_memzero(U, sizeof(U));
+    insecure_memzero(T, sizeof(T));
 }
