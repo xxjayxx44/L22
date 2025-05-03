@@ -9,7 +9,7 @@
  */
 
 #include "cpuminer-config.h"
-#include "miner.h"
+#include "miner.h"        /* brings in existing be32dec/be32enc, sha256d prototype */
 
 #include <string.h>
 #include <inttypes.h>
@@ -40,47 +40,23 @@ static const uint32_t SHA256_K[64] = {
     0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
 };
 
-/* Initial vector for second round of double-SHA256 */
-static const uint32_t SHA256D_IV2[8] = {
-    0x00000000u, 0x00000000u, 0x80000000u, 0x00000000u,
-    0x00000000u, 0x00000000u, 0x00000000u, 0x00000100u
-};
-
-/* --- Endianness helpers --- */
+/* --- Rotate and SHA-256 logical functions --- */
 static inline uint32_t rotr32(uint32_t x, unsigned n) {
     return (x >> n) | (x << (32 - n));
 }
 
-static inline uint32_t be32dec(const uint8_t *p) {
-    return ((uint32_t)p[0] << 24)
-         | ((uint32_t)p[1] << 16)
-         | ((uint32_t)p[2] << 8)
-         |  (uint32_t)p[3];
-}
-
-static inline void be32enc(uint8_t *p, uint32_t x) {
-    p[0] = (uint8_t)(x >> 24);
-    p[1] = (uint8_t)(x >> 16);
-    p[2] = (uint8_t)(x >> 8);
-    p[3] = (uint8_t)(x);
-}
-
-/* --- SHA-256 logical functions --- */
 #define CH(x,y,z)   (((x) & ((y) ^ (z))) ^ (z))
 #define MAJ(x,y,z)  (((x) & ((y) | (z))) | ((y) & (z)))
 
 static inline uint32_t SIG0(uint32_t x) {
     return rotr32(x, 2) ^ rotr32(x, 13) ^ rotr32(x, 22);
 }
-
 static inline uint32_t SIG1(uint32_t x) {
     return rotr32(x, 6) ^ rotr32(x, 11) ^ rotr32(x, 25);
 }
-
 static inline uint32_t sig0(uint32_t x) {
     return rotr32(x, 7) ^ rotr32(x, 18) ^ (x >> 3);
 }
-
 static inline uint32_t sig1(uint32_t x) {
     return rotr32(x, 17) ^ rotr32(x, 19) ^ (x >> 10);
 }
@@ -103,20 +79,16 @@ static void sha256_compress(uint32_t state[8], const uint32_t M[16]) {
 
     /* 3. 64 rounds */
     for (i = 0; i < 64; i++) {
-        t1 = S[7] + SIG1(S[4]) + CH(S[4], S[5], S[6])
+        t1 = S[7] + SIG1(S[4]) + CH(S[4],S[5],S[6])
            + SHA256_K[i] + W[i];
-        t2 = SIG0(S[0]) + MAJ(S[0], S[1], S[2]);
-        S[7] = S[6];
-        S[6] = S[5];
-        S[5] = S[4];
-        S[4] = S[3] + t1;
-        S[3] = S[2];
-        S[2] = S[1];
-        S[1] = S[0];
+        t2 = SIG0(S[0]) + MAJ(S[0],S[1],S[2]);
+        S[7] = S[6]; S[6] = S[5]; S[5] = S[4];
+        S[4] = S[3] + t1; S[3] = S[2];
+        S[2] = S[1]; S[1] = S[0];
         S[0] = t1 + t2;
     }
 
-    /* 4. Fold back into state */
+    /* 4. Fold back */
     for (i = 0; i < 8; i++)
         state[i] += S[i];
 }
@@ -129,7 +101,7 @@ void sha256_init(uint32_t state[8]) {
 /**
  * Transform one 512-bit block.
  * @param state   current hash state (8 words)
- * @param block   16 big-endian 32-bit words (if swap==1, bytes are swapped)
+ * @param block   16 big-endian 32-bit words
  * @param swap    if non-zero, bytes of each word in block[] are swapped
  */
 void sha256_transform(uint32_t state[8], const uint32_t block[16], int swap) {
@@ -143,30 +115,29 @@ void sha256_transform(uint32_t state[8], const uint32_t block[16], int swap) {
     sha256_compress(state, M);
 }
 
-/* --- Single-pass SHA-256 for arbitrary data --- */
-void sha256(const uint8_t *data, size_t len, uint8_t out32[32]) {
+/* --- One-shot SHA-256 for arbitrary-length input --- */
+void sha256(const unsigned char *data, size_t len, unsigned char out32[32]) {
     uint32_t state[8];
-    uint8_t block[64];
+    unsigned char block[64];
     size_t left = len;
-    const uint8_t *ptr = data;
+    const unsigned char *ptr = data;
 
     sha256_init(state);
 
+    /* process full blocks */
     while (left >= 64) {
         uint32_t M[16];
         for (int i = 0; i < 16; i++)
             M[i] = be32dec(ptr + 4*i);
         sha256_compress(state, M);
-        ptr += 64;
-        left -= 64;
+        ptr += 64; left -= 64;
     }
 
-    /* Copy remainder and append 0x80 */
+    /* final block + padding */
     memset(block, 0, 64);
-    if (left > 0) memcpy(block, ptr, left);
+    if (left) memcpy(block, ptr, left);
     block[left] = 0x80;
 
-    /* If not enough room for length, process this block and clear it */
     if (left >= 56) {
         uint32_t M[16];
         for (int i = 0; i < 16; i++)
@@ -175,10 +146,10 @@ void sha256(const uint8_t *data, size_t len, uint8_t out32[32]) {
         memset(block, 0, 64);
     }
 
-    /* Append length in bits */
+    /* append bit-length */
     uint64_t bitlen = (uint64_t)len << 3;
     for (int i = 0; i < 8; i++)
-        block[63 - i] = (uint8_t)(bitlen >> (8 * i));
+        block[63 - i] = (unsigned char)(bitlen >> (8 * i));
 
     {
         uint32_t M[16];
@@ -187,16 +158,14 @@ void sha256(const uint8_t *data, size_t len, uint8_t out32[32]) {
         sha256_compress(state, M);
     }
 
-    /* Output hash */
+    /* output */
     for (int i = 0; i < 8; i++)
         be32enc(out32 + 4*i, state[i]);
 }
 
-/* --- Double SHA-256 (SHA-256d) --- */
-void sha256d(const uint8_t *msg, size_t len, uint8_t out32[32]) {
-    uint8_t inner[32];
-    /* 1. Single SHA-256 */
-    sha256(msg, len, inner);
-    /* 2. Second SHA-256 */
-    sha256(inner, 32, out32);
+/* --- Double SHA-256 (matches miner.h signature) --- */
+void sha256d(unsigned char *hash, const unsigned char *data, int len) {
+    unsigned char tmp[32];
+    sha256(data, (size_t)len, tmp);
+    sha256(tmp, 32, hash);
 }
