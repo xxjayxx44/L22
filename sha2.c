@@ -11,7 +11,7 @@
 
 #include "cpuminer-config.h"
 #include "miner.h"
-#include "insecure_memzero.h"
+
 
 /* --- Big-endian encode/decode helpers --- */
 static inline uint32_t be32dec(const uint8_t *p) {
