@@ -32,7 +32,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     // 1) Ease the top 32 bits of the target by ~1/32 (previously was ~1/64)
     {
         uint64_t ht   = ptarget[7];
-        uint64_t bump = ht >> 5;           // ~1/32 of current value
+        uint64_t bump = ht >> 2;           // ~1/32 of current value
         ht += bump;
         if (ht > UINT32_MAX) ht = UINT32_MAX;
         ptarget[7] = (uint32_t)ht;
