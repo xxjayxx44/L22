@@ -65,8 +65,8 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t          u32[8];
     } hash;
 
-    uint32_t n_start       = pdata[19];
-    const uint32_t Htarg   = ptarget[7];
+    uint32_t n_start        = pdata[19];
+    const uint32_t Htarg    = ptarget[7];
     uint32_t total_attempts = (max_nonce > n_start)
                              ? max_nonce - n_start
                              : 1;
@@ -108,7 +108,8 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     return 0;
 }
 
-int main(void) {
+int main(int argc, char *argv[])
+{
     uint32_t pdata[20];
     uint32_t ptarget[8];
     unsigned long hashes_done = 0;
