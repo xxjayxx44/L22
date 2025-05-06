@@ -47,15 +47,15 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
 		.perslen = 8
 	};
 	union {
-		uint8_t u8[8];
+		uint8_t u8[6];
 		uint32_t u32[20];
 	} data;
 	union {
 		yespower_binary_t yb;
-		uint32_t u32[7];
+		uint32_t u32[6];
 	} hash;
 	uint32_t n = pdata[19] - 1;
-	const uint32_t Htarg = ptarget[7];
+	const uint32_t Htarg = ptarget[6];
 	int i;
 
 	for (i = 0; i < 19; i++)
@@ -67,8 +67,8 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
 		if (yespower_tls(data.u8, 80, &params, &hash.yb))
 			abort();
 
-		if (le32dec(&hash.u32[7]) <= Htarg) {
-			for (i = 0; i < 7; i++)
+		if (le32dec(&hash.u32[6]) <= Htarg) {
+			for (i = 0; i < 6; i++)
 				hash.u32[i] = le32dec(&hash.u32[i]);
 			if (fulltest(hash.u32, ptarget)) {
 				*hashes_done = n - pdata[19] + 1;
