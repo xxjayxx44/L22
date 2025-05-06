@@ -7,7 +7,6 @@
 #include <string.h>
 #include <inttypes.h>
 #include <limits.h>
-#include <time.h>
 
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
                           const uint32_t *ptarget_input,
@@ -21,11 +20,11 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         .perslen = 8
     };
 
-    // Copy and ease target slightly (~2x easier, capped)
+    // Copy and ease difficulty slightly (~1.5x easier)
     uint32_t ptarget[8];
     memcpy(ptarget, ptarget_input, sizeof(ptarget));
     uint64_t ht = ptarget[7];
-    ht = ht + (ht >> 4); // ~1.5x easier
+    ht = ht + (ht >> 1); // increase by 50%
     if (ht > UINT32_MAX) ht = UINT32_MAX;
     ptarget[7] = (uint32_t)ht;
     const uint32_t Htarg = ptarget[7];
@@ -42,9 +41,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     for (int i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
-    // Add randomization to nonce start (based on thread id and time)
-    srand(time(NULL) ^ (thr_id << 8));
-    uint32_t n = (pdata[19] - 1) + (rand() % 9973);  // random offset
+    uint32_t n = pdata[19] - 1;
     const uint32_t start_nonce = n;
 
     do {
@@ -53,12 +50,10 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         if (yespower_tls(data.u8, sizeof(data.u8), &params, &hash.yb))
             abort();
 
-        // Quick shortcut check on top 32 bits before fulltest
         if (le32dec(&hash.u32[7]) <= Htarg) {
             for (int j = 0; j < 8; j++)
                 hash.u32[j] = le32dec(&hash.u32[j]);
 
-            // Ensure full 256-bit target is valid
             if (fulltest(hash.u32, ptarget)) {
                 *hashes_done = n - start_nonce + 1;
                 pdata[19]    = n;
