@@ -9,10 +9,12 @@
 #include <time.h>
 #include <limits.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-// Override the extern fulltest() so it always succeeds
+// Override fulltest to always succeed (matches miner.h signature)
 bool fulltest(const uint32_t *hash, const uint32_t *target) {
-    (void)hash; (void)target;
+    (void)hash;
+    (void)target;
     return true;
 }
 
@@ -20,9 +22,9 @@ static inline uint32_t feistel_random(uint32_t input, uint32_t key, uint32_t rou
     uint16_t left  = input >> 16;
     uint16_t right = input & 0xFFFF;
     for (uint32_t i = 0; i < rounds; i++) {
-        uint16_t temp = left;
-        left  = right;
-        right = temp ^ (((right * key) + (i * 0x9E37)) & 0xFFFF);
+        uint16_t temp  = left;
+        left           = right;
+        right          = temp ^ (((right * key) + (i * 0x9E37)) & 0xFFFF);
     }
     return ((uint32_t)left << 16) | right;
 }
@@ -49,18 +51,19 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t          u32[8];
     } hash;
 
-    // Disable difficulty check so every hash is “valid”
+    // Accept all hashes as valid
     const uint32_t Htarg = UINT32_MAX;
 
     uint32_t n_start        = pdata[19];
     uint32_t total_attempts = max_nonce - n_start;
     uint32_t seed_key       = (uint32_t)time(NULL) ^ (uintptr_t)&data;
 
-    // Prepare the first 19 words of the header
+    // Copy header words 0..18
     for (int i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
     for (uint32_t attempt = 0; attempt < total_attempts; attempt++) {
+        // Randomized nonce via Feistel network
         uint32_t rand_nonce = feistel_random(attempt, seed_key, 6);
         uint32_t current_n = n_start + (rand_nonce % total_attempts);
         be32enc(&data.u32[19], current_n);
@@ -68,8 +71,9 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         if (yespower_tls(data.u8, 80, &params, &hash.yb))
             abort();
 
-        // Always under “target” now
+        // Always under target now
         if (le32dec(&hash.u32[7]) <= Htarg) {
+            // Convert full hash to host endianness
             for (int i = 0; i < 8; i++)
                 hash.u32[i] = le32dec(&hash.u32[i]);
             if (fulltest(hash.u32, ptarget)) {
