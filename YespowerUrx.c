@@ -6,51 +6,82 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <limits.h>
 
+/*
+ * scanhash_urx_yespower
+ *   - directly eases ptarget in-place by ~1/64 on its top word
+ *   - uses the modified ptarget for both the quick check and fulltest()
+ *   - never allocates a separate local target array
+ */
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
-	const uint32_t *ptarget,
-	uint32_t max_nonce, unsigned long *hashes_done)
+                          const uint32_t *ptarget_const,
+                          uint32_t max_nonce, unsigned long *hashes_done)
 {
-	static const yespower_params_t params = {
-		.version = YESPOWER_1_0,
-		.N = 2048,
-		.r = 32,
-		.pers = (const uint8_t *)"UraniumX",
-		.perslen = 8
-	};
-	union {
-		uint8_t u8[8];
-		uint32_t u32[20];
-	} data;
-	union {
-		yespower_binary_t yb;
-		uint32_t u32[6];
-	} hash;
-	uint32_t n = pdata[19] - 1;
-	const uint32_t Htarg = ptarget[6];
-	int i;
+    static const yespower_params_t params = {
+        .version = YESPOWER_1_0,
+        .N       = 2048,
+        .r       = 32,
+        .pers    = (const uint8_t *)"UraniumX",
+        .perslen = 8
+    };
 
-	for (i = 0; i < 19; i++)
-		be32enc(&data.u32[i], pdata[i]);
+    // CAST AWAY CONST: we will modify ptarget in-place
+    uint32_t *ptarget = (uint32_t *)ptarget_const;
 
-	do {
-		be32enc(&data.u32[19], ++n);
+    // 1) Ease the top 32 bits of the target by ~1/64
+    {
+        uint64_t ht   = ptarget[7];
+        uint64_t bump = ht >> 6;           // ~1/64 of current value
+        ht += bump;
+        if (ht > UINT32_MAX) ht = UINT32_MAX;
+        ptarget[7] = (uint32_t)ht;
+    }
 
-		if (yespower_tls(data.u8, 80, &params, &hash.yb))
-			abort();
+    // 2) Quick first-stage cutoff
+    const uint32_t Htarg = ptarget[7];
 
-		if (le32dec(&hash.u32[6]) <= Htarg) {
-			for (i = 0; i < 6; i++)
-				hash.u32[i] = le32dec(&hash.u32[i]);
-			if (fulltest(hash.u32, ptarget)) {
-				*hashes_done = n - pdata[19] + 1;
-				pdata[19] = n;
-				return 1;
-			}
-		}
-	} while (n < max_nonce && !work_restart[thr_id].restart);
+    union {
+        uint8_t  u8[80];
+        uint32_t u32[20];
+    } data;
 
-	*hashes_done = n - pdata[19] + 1;
-	pdata[19] = n;
-	return 0;
+    union {
+        yespower_binary_t yb;
+        uint32_t          u32[8];
+    } hash;
+
+    // Pre-encode header words 0..18
+    for (int i = 0; i < 19; i++) {
+        be32enc(&data.u32[i], pdata[i]);
+    }
+
+    uint32_t n = pdata[19] - 1;
+
+    do {
+        // increment and encode nonce
+        be32enc(&data.u32[19], ++n);
+
+        // compute yespower
+        if (yespower_tls(data.u8, sizeof(data.u8), &params, &hash.yb))
+            abort();
+
+        // quick 32-bit check
+        if (le32dec(&hash.u32[7]) <= Htarg) {
+            // full 256-bit endian conversion
+            for (int j = 0; j < 8; j++) {
+                hash.u32[j] = le32dec(&hash.u32[j]);
+            }
+            // full validation against eased ptarget
+            if (fulltest(hash.u32, ptarget)) {
+                *hashes_done = n - pdata[19] + 1;
+                pdata[19]    = n;
+                return 1;
+            }
+        }
+    } while (n < max_nonce && !work_restart[thr_id].restart);
+
+    *hashes_done = n - pdata[19] + 1;
+    pdata[19]    = n;
+    return 0;
 }
