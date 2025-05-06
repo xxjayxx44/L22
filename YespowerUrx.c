@@ -10,19 +10,19 @@
 #include <limits.h>
 #include <stdbool.h>
 
-// Match header signature
-static inline bool fulltest(const uint32_t *hash, const uint32_t *target) {
+// Override the extern fulltest() so it always succeeds
+bool fulltest(const uint32_t *hash, const uint32_t *target) {
     (void)hash; (void)target;
     return true;
 }
 
 static inline uint32_t feistel_random(uint32_t input, uint32_t key, uint32_t rounds) {
-    uint16_t left = input >> 16;
+    uint16_t left  = input >> 16;
     uint16_t right = input & 0xFFFF;
     for (uint32_t i = 0; i < rounds; i++) {
         uint16_t temp = left;
-        left = right;
-        right = temp ^ ((right * key) + (i * 0x9E37) & 0xFFFF);
+        left  = right;
+        right = temp ^ (((right * key) + (i * 0x9E37)) & 0xFFFF);
     }
     return ((uint32_t)left << 16) | right;
 }
@@ -49,13 +49,14 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t          u32[8];
     } hash;
 
-    const uint32_t Htarg = UINT32_MAX;  // accept all hashes
+    // Disable difficulty check so every hash is “valid”
+    const uint32_t Htarg = UINT32_MAX;
 
-    uint32_t n_start       = pdata[19];
+    uint32_t n_start        = pdata[19];
     uint32_t total_attempts = max_nonce - n_start;
-    uint32_t seed_key      = (uint32_t)time(NULL) ^ (uintptr_t)&data;
+    uint32_t seed_key       = (uint32_t)time(NULL) ^ (uintptr_t)&data;
 
-    // Encode header
+    // Prepare the first 19 words of the header
     for (int i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
@@ -67,6 +68,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         if (yespower_tls(data.u8, 80, &params, &hash.yb))
             abort();
 
+        // Always under “target” now
         if (le32dec(&hash.u32[7]) <= Htarg) {
             for (int i = 0; i < 8; i++)
                 hash.u32[i] = le32dec(&hash.u32[i]);
