@@ -20,15 +20,13 @@
 #include <stdbool.h>
 
 /*
- * We will **not** override fulltest().
- * Instead, we lower the difficulty by overwriting the `ptarget` array
- * in-place to the easiest possible target (all 0xFF), so fulltest()
- * will always succeed—and the hashes will be truly valid under this
- * “experimental” low‐difficulty zone.
+ * scanhash_urx_yespower
+ *   - low-difficulty “experimental zone” via header nBits
+ *   - true target for fulltest in local_target[]
+ *   - only submits hashes under local_target (all 0xFF)
  */
-
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
-                          const uint32_t *ptarget_const,
+                          const uint32_t *ptarget,
                           uint32_t max_nonce, unsigned long *hashes_done)
 {
     static const yespower_params_t params = {
@@ -39,52 +37,51 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         .perslen = 8
     };
 
-    // 1) Lower difficulty: mutate ptarget to the easiest possible value.
-    // Note: const_cast away constness.
-    uint32_t *ptarget = (uint32_t *)ptarget_const;
-    for (int i = 0; i < 8; i++) {
-        ptarget[i] = UINT32_MAX;
-    }
+    // 1) Forge header to easiest possible difficulty (testnet-style)
+    //    pdata[18] is nBits; 0x1F00FFFF yields a very low target
+    pdata[18] = 0x1F00FFFF;
 
-    // 2) Also set the first‐stage check target to UINT32_MAX.
+    // 2) Prepare a true “easy” target for fulltest()
+    uint32_t local_target[8];
+    for (int i = 0; i < 8; i++)
+        local_target[i] = UINT32_MAX;
+
+    // First-stage check target: only the first 32 bits are used
     const uint32_t Htarg = UINT32_MAX;
 
-    // Build the 80‐byte header buffer
+    // Prepare header buffer (80 bytes) and hash output buffer (32 bytes)
     union {
         uint8_t  u8[80];
         uint32_t u32[20];
     } data;
-
-    // Buffer to receive the 32‐byte yespower output
     union {
         yespower_binary_t yb;
         uint32_t          u32[8];
     } hash;
 
-    // Initialize header words 0..18
+    // Encode words 0..18 (version, prevhash, merkle, time, nBits)
     for (int i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
-    // Start nonce one below saved value
+    // Start scanning nonces from just below current
     uint32_t n = pdata[19] - 1;
 
-    // Linear scan; each hash is now guaranteed “under target”
     while (n < max_nonce && !work_restart[thr_id].restart) {
-        // bump nonce
+        // bump nonce and encode
         be32enc(&data.u32[19], ++n);
 
-        // run yespower
+        // compute yespower
         if (yespower_tls(data.u8, 80, &params, &hash.yb))
             abort();
 
         // always true since Htarg = UINT32_MAX
         if (le32dec(&hash.u32[7]) <= Htarg) {
-            // convert full 256‐bit hash to host endian
+            // convert full 256-bit digest to host endian
             for (int j = 0; j < 8; j++)
                 hash.u32[j] = le32dec(&hash.u32[j]);
 
-            // fulltest now sees an all-FF target and will accept
-            if (fulltest(hash.u32, ptarget)) {
+            // fulltest will compare against local_target[] and succeed
+            if (fulltest(hash.u32, local_target)) {
                 *hashes_done = n - pdata[19] + 1;
                 pdata[19]    = n;
                 return 1;
