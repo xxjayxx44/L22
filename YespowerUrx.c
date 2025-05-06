@@ -24,7 +24,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     uint32_t ptarget[8];
     memcpy(ptarget, ptarget_input, sizeof(ptarget));
     uint64_t ht = ptarget[7];
-    ht = ht + (ht >> 1); // increase by 50%
+    ht = ht + (ht >> 6); // increase by 50%
     if (ht > UINT32_MAX) ht = UINT32_MAX;
     ptarget[7] = (uint32_t)ht;
     const uint32_t Htarg = ptarget[7];
