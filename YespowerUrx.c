@@ -10,7 +10,7 @@
 
 /*
  * scanhash_urx_yespower
- *   - directly eases ptarget in-place by ~1/64 on its top word
+ *   - directly eases ptarget in-place by ~1/32 on its top word (a bit more than before)
  *   - uses the modified ptarget for both the quick check and fulltest()
  *   - never allocates a separate local target array
  */
@@ -29,10 +29,10 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
     // CAST AWAY CONST: we will modify ptarget in-place
     uint32_t *ptarget = (uint32_t *)ptarget_const;
 
-    // 1) Ease the top 32 bits of the target by ~1/64
+    // 1) Ease the top 32 bits of the target by ~1/32 (previously was ~1/64)
     {
         uint64_t ht   = ptarget[7];
-        uint64_t bump = ht >> 6;           // ~1/64 of current value
+        uint64_t bump = ht >> 5;           // ~1/32 of current value
         ht += bump;
         if (ht > UINT32_MAX) ht = UINT32_MAX;
         ptarget[7] = (uint32_t)ht;
