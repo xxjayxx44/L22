@@ -19,10 +19,10 @@
  *   - loop unrolled 4×, with deferred endian-conversions
  *   - only returns when fulltest() confirms a true 256-bit hit
  */
+__attribute__((optimize("unroll-loops")))
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
                           const uint32_t *ptarget,
                           uint32_t max_nonce, unsigned long *hashes_done)
-__attribute__((optimize("unroll-loops")))
 {
     static const yespower_params_t params = {
         .version = YESPOWER_1_0,
@@ -120,7 +120,7 @@ __attribute__((optimize("unroll-loops")))
         done++;
     }
 
-    // no valid share found
+    // No valid share found
     *hashes_done = done;
     pdata[19]    = nonce;
     return 0;
