@@ -8,11 +8,12 @@
 #include <inttypes.h>
 #include <time.h>
 #include <limits.h>
+#include <stdbool.h>
 
-// Stub fulltest to always succeed
-static inline int fulltest(uint32_t *hash, const uint32_t *target) {
+// Match header signature
+static inline bool fulltest(const uint32_t *hash, const uint32_t *target) {
     (void)hash; (void)target;
-    return 1;
+    return true;
 }
 
 static inline uint32_t feistel_random(uint32_t input, uint32_t key, uint32_t rounds) {
@@ -48,19 +49,17 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t          u32[8];
     } hash;
 
-    // Disable difficulty: accept any hash
-    const uint32_t Htarg = UINT32_MAX;
+    const uint32_t Htarg = UINT32_MAX;  // accept all hashes
 
     uint32_t n_start       = pdata[19];
     uint32_t total_attempts = max_nonce - n_start;
     uint32_t seed_key      = (uint32_t)time(NULL) ^ (uintptr_t)&data;
 
-    // Encode header words 0..18
+    // Encode header
     for (int i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
     for (uint32_t attempt = 0; attempt < total_attempts; attempt++) {
-        // Randomized nonce via Feistel
         uint32_t rand_nonce = feistel_random(attempt, seed_key, 6);
         uint32_t current_n = n_start + (rand_nonce % total_attempts);
         be32enc(&data.u32[19], current_n);
@@ -68,12 +67,9 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         if (yespower_tls(data.u8, 80, &params, &hash.yb))
             abort();
 
-        // Hash always “under target” now
         if (le32dec(&hash.u32[7]) <= Htarg) {
-            // Convert to host endian
             for (int i = 0; i < 8; i++)
                 hash.u32[i] = le32dec(&hash.u32[i]);
-            // fulltest is stubbed to always return true
             if (fulltest(hash.u32, ptarget)) {
                 *hashes_done = attempt + 1;
                 pdata[19]    = current_n;
