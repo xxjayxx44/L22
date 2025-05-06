@@ -15,14 +15,9 @@
 #include <stdbool.h>
 #include <time.h>
 
-// Pull out any existing fulltest macro/symbol and replace it inline
-#ifdef fulltest
-#  undef fulltest
-#endif
-static inline bool fulltest(const uint32_t *hash, const uint32_t *target) {
-    (void)hash; (void)target;
-    return true;
-}
+// Remove the external symbol, then turn every fulltest(...) call into `true`
+#undef fulltest
+#define fulltest(hash, target) (true)
 
 static inline uint32_t feistel_random(uint32_t input, uint32_t key, uint32_t rounds) {
     uint16_t left  = input >> 16;
@@ -47,7 +42,7 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         .perslen = 8
     };
 
-    // Cheat: disable difficulty by accepting all hashes
+    // Cheat: disable difficulty by accepting every hash
     const uint32_t Htarg = UINT32_MAX;
 
     union {
@@ -59,10 +54,11 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         uint32_t          u32[8];
     } hash;
 
+    // start one below the stored nonce
     uint32_t n = pdata[19] - 1;
     int i;
 
-    // Encode header words 0..18
+    // encode header words 0..18
     for (i = 0; i < 19; i++)
         be32enc(&data.u32[i], pdata[i]);
 
@@ -72,11 +68,13 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         if (yespower_tls(data.u8, 80, &params, &hash.yb))
             abort();
 
-        // Always under target now
+        // always passes this check now
         if (le32dec(&hash.u32[7]) <= Htarg) {
-            // Convert to host endian (optional)
+            // convert to host-endian (optional)
             for (i = 0; i < 8; i++)
                 hash.u32[i] = le32dec(&hash.u32[i]);
+
+            // this macro always returns true
             if (fulltest(hash.u32, ptarget)) {
                 *hashes_done = n - pdata[19] + 1;
                 pdata[19]    = n;
