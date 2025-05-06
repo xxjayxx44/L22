@@ -1,12 +1,8 @@
 /*
- * Copyright 2011 ArtForz, 2011-2014 pooler, 2018 The Resistance developers,
+ * Copyright 2011 ArtForz, 2011-2014 pooler,
+ * 2018 The Resistance developers,
  * 2020 The Sugarchain Yumekawa developers
  * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *   …
  */
 
 #include "cpuminer-config.h"
@@ -16,18 +12,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
-#include <limits.h>
-#include <stdbool.h>
 
 /*
- * scanhash_urx_yespower
- *   - low-difficulty “experimental zone” via header nBits
- *   - true target for fulltest in local_target[]
- *   - only submits hashes under local_target (all 0xFF)
+ * High-performance YespowerURX scanhash for Celeron N4020
+ *   - honors the real pool difficulty (ptarget)
+ *   - loop unrolled 4×, with deferred endian-conversions
+ *   - only returns when fulltest() confirms a true 256-bit hit
  */
 int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
                           const uint32_t *ptarget,
                           uint32_t max_nonce, unsigned long *hashes_done)
+__attribute__((optimize("unroll-loops")))
 {
     static const yespower_params_t params = {
         .version = YESPOWER_1_0,
@@ -37,59 +32,96 @@ int scanhash_urx_yespower(int thr_id, uint32_t *pdata,
         .perslen = 8
     };
 
-    // 1) Forge header to easiest possible difficulty (testnet-style)
-    //    pdata[18] is nBits; 0x1F00FFFF yields a very low target
-    pdata[18] = 0x1F00FFFF;
+    // First-stage cutoff: top 32 bits of the 256-bit digest
+    const uint32_t Htarg = ptarget[7];
 
-    // 2) Prepare a true “easy” target for fulltest()
-    uint32_t local_target[8];
-    for (int i = 0; i < 8; i++)
-        local_target[i] = UINT32_MAX;
+    // 80-byte header buffer, aligned to cache line
+    uint32_t data_u32[20] __attribute__((aligned(64)));
+    uint8_t  *data_u8 = (uint8_t *)data_u32;
 
-    // First-stage check target: only the first 32 bits are used
-    const uint32_t Htarg = UINT32_MAX;
+    // 32-byte output buffer, aligned
+    yespower_binary_t yb __attribute__((aligned(64)));
+    uint32_t *hash_u32 = (uint32_t *)&yb;
 
-    // Prepare header buffer (80 bytes) and hash output buffer (32 bytes)
-    union {
-        uint8_t  u8[80];
-        uint32_t u32[20];
-    } data;
-    union {
-        yespower_binary_t yb;
-        uint32_t          u32[8];
-    } hash;
-
-    // Encode words 0..18 (version, prevhash, merkle, time, nBits)
+    // Pre-encode words 0..18 (version, prevhash, merkle, time, nBits)
     for (int i = 0; i < 19; i++)
-        be32enc(&data.u32[i], pdata[i]);
+        be32enc(&data_u32[i], pdata[i]);
 
-    // Start scanning nonces from just below current
-    uint32_t n = pdata[19] - 1;
+    uint32_t nonce = pdata[19] - 1;
+    uint32_t done  = 0;
 
-    while (n < max_nonce && !work_restart[thr_id].restart) {
-        // bump nonce and encode
-        be32enc(&data.u32[19], ++n);
-
-        // compute yespower
-        if (yespower_tls(data.u8, 80, &params, &hash.yb))
-            abort();
-
-        // always true since Htarg = UINT32_MAX
-        if (le32dec(&hash.u32[7]) <= Htarg) {
-            // convert full 256-bit digest to host endian
-            for (int j = 0; j < 8; j++)
-                hash.u32[j] = le32dec(&hash.u32[j]);
-
-            // fulltest will compare against local_target[] and succeed
-            if (fulltest(hash.u32, local_target)) {
-                *hashes_done = n - pdata[19] + 1;
-                pdata[19]    = n;
+    // Unrolled loop: 4 nonces per iteration
+    while (nonce + 4 < max_nonce && !work_restart[thr_id].restart) {
+        // #1
+        be32enc(&data_u32[19], ++nonce);
+        yespower_tls(data_u8, sizeof(data_u8[0]) * 20, &params, &yb);
+        if (le32dec(&hash_u32[7]) <= Htarg) {
+            for (int j = 0; j < 8; j++) hash_u32[j] = le32dec(&hash_u32[j]);
+            if (fulltest(hash_u32, ptarget)) {
+                *hashes_done = done + 1;
+                pdata[19]    = nonce;
                 return 1;
             }
         }
+        done++;
+
+        // #2
+        be32enc(&data_u32[19], ++nonce);
+        yespower_tls(data_u8, sizeof(data_u8[0]) * 20, &params, &yb);
+        if (le32dec(&hash_u32[7]) <= Htarg) {
+            for (int j = 0; j < 8; j++) hash_u32[j] = le32dec(&hash_u32[j]);
+            if (fulltest(hash_u32, ptarget)) {
+                *hashes_done = done + 1;
+                pdata[19]    = nonce;
+                return 1;
+            }
+        }
+        done++;
+
+        // #3
+        be32enc(&data_u32[19], ++nonce);
+        yespower_tls(data_u8, sizeof(data_u8[0]) * 20, &params, &yb);
+        if (le32dec(&hash_u32[7]) <= Htarg) {
+            for (int j = 0; j < 8; j++) hash_u32[j] = le32dec(&hash_u32[j]);
+            if (fulltest(hash_u32, ptarget)) {
+                *hashes_done = done + 1;
+                pdata[19]    = nonce;
+                return 1;
+            }
+        }
+        done++;
+
+        // #4
+        be32enc(&data_u32[19], ++nonce);
+        yespower_tls(data_u8, sizeof(data_u8[0]) * 20, &params, &yb);
+        if (le32dec(&hash_u32[7]) <= Htarg) {
+            for (int j = 0; j < 8; j++) hash_u32[j] = le32dec(&hash_u32[j]);
+            if (fulltest(hash_u32, ptarget)) {
+                *hashes_done = done + 1;
+                pdata[19]    = nonce;
+                return 1;
+            }
+        }
+        done++;
     }
 
-    *hashes_done = n - pdata[19] + 1;
-    pdata[19]    = n;
+    // Tail: process remaining nonces one-by-one
+    while (nonce < max_nonce && !work_restart[thr_id].restart) {
+        be32enc(&data_u32[19], ++nonce);
+        yespower_tls(data_u8, sizeof(data_u8[0]) * 20, &params, &yb);
+        if (le32dec(&hash_u32[7]) <= Htarg) {
+            for (int j = 0; j < 8; j++) hash_u32[j] = le32dec(&hash_u32[j]);
+            if (fulltest(hash_u32, ptarget)) {
+                *hashes_done = done + 1;
+                pdata[19]    = nonce;
+                return 1;
+            }
+        }
+        done++;
+    }
+
+    // no valid share found
+    *hashes_done = done;
+    pdata[19]    = nonce;
     return 0;
 }
