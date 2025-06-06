@@ -1,6 +1,6 @@
 /*
- * Optimized SHA-256, HMAC-SHA256, and PBKDF2-HMAC-SHA256 implementation
- * Adapted for use in yespower-opt.c (provides SHA256_Buf and HMAC_SHA256_Buf).
+ * Minimal SHA-256, HMAC-SHA256, and PBKDF2-HMAC-SHA256 implementation
+ * for use with yespower-opt.c.  No external dependencies beyond <stdint.h> and <string.h>.
  */
 
 #include <stdint.h>
@@ -9,8 +9,8 @@
 /* SHA-256 context structure */
 typedef struct {
     uint32_t state[8];
-    uint64_t count;       /* number of bits processed */
-    uint8_t buffer[64];   /* 512-bit block buffer */
+    uint64_t count;       /* Number of bits processed so far */
+    uint8_t buffer[64];   /* 512-bit message block buffer */
 } SHA256_CTX;
 
 /* Rotate right (32-bit) */
@@ -44,14 +44,13 @@ static const uint32_t K256[64] = {
 
 /*
  * SHA256_Transform:
- *   Perform the SHA-256 compression on a single 512-bit block.
- *   This version unrolls rounds in 8-round blocks for improved instruction-level parallelism.
+ *   Perform one SHA-256 compression on the 512-bit block.
+ *   This version unrolls rounds in groups of eight for higher throughput.
  */
 static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
-    uint32_t W[64];
-    uint32_t a, b, c, d, e, f, g, h, T1, T2;
+    uint32_t W[64], a, b, c, d, e, f, g, h, T1, T2;
 
-    /* Prepare message schedule (big-endian) */
+    /* Message schedule (decode big-endian into W[0..15]) */
     for (int i = 0; i < 16; i++) {
         W[i]  = ((uint32_t)block[4*i]   << 24)
               | ((uint32_t)block[4*i+1] << 16)
@@ -66,7 +65,7 @@ static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
     a = state[0]; b = state[1]; c = state[2]; d = state[3];
     e = state[4]; f = state[5]; g = state[6]; h = state[7];
 
-    /* Unrolled main loop: process in chunks of 8 rounds */
+    /* Main loop: 64 rounds, unrolled in chunks of 8 */
     for (int i = 0; i < 64; i += 8) {
         /* Round i */
         T1 = h + EP1(e) + CH(e,f,g) + K256[i]   + W[i];
@@ -117,7 +116,7 @@ static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
         d = c; c = b; b = a; a = T1 + T2;
     }
 
-    /* Add back into state */
+    /* Add compressed chunk back into state */
     state[0] += a;
     state[1] += b;
     state[2] += c;
@@ -129,11 +128,9 @@ static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
 }
 
 /*
- * SHA256_Init:
- *   Initialize the SHA-256 context (set initial hash values).
+ * Initialize SHA-256 context.
  */
 void SHA256_Init(SHA256_CTX *ctx) {
-    /* These are the first 32 bits of the fractional parts of the square roots of the first 8 primes */
     ctx->state[0] = 0x6a09e667UL;
     ctx->state[1] = 0xbb67ae85UL;
     ctx->state[2] = 0x3c6ef372UL;
@@ -148,21 +145,21 @@ void SHA256_Init(SHA256_CTX *ctx) {
 
 /*
  * SHA256_Update:
- *   Process input data in chunks, updating the SHA-256 state.
+ *   Accepts incoming data in arbitrary length chunks.
  */
 void SHA256_Update(SHA256_CTX *ctx, const uint8_t *data, size_t len) {
-    size_t idx = (ctx->count >> 3) & 0x3F; /* bytes used in buffer */
-    ctx->count += (uint64_t)len << 3;      /* update bit count */
+    size_t idx = (ctx->count >> 3) & 0x3F;  /* Bytes used in buffer */
+    ctx->count += (uint64_t)len << 3;       /* Update bit count */
 
     size_t part = 64 - idx;
     size_t i = 0;
 
-    /* If buffer has leftover data and we can fill to 64 bytes, fill and transform */
+    /* Fill buffer and transform when full */
     if (len >= part) {
         memcpy(&ctx->buffer[idx], data, part);
         SHA256_Transform(ctx->state, ctx->buffer);
         i = part;
-        /* Process full blocks directly from input */
+        /* Process as many 64-byte blocks as possible directly from data */
         for (; i + 63 < len; i += 64) {
             SHA256_Transform(ctx->state, data + i);
         }
@@ -177,14 +174,14 @@ void SHA256_Update(SHA256_CTX *ctx, const uint8_t *data, size_t len) {
 
 /*
  * SHA256_Final:
- *   Finalize the hash and produce the 32-byte output (big-endian).
+ *   Complete the hash with padding and output the 32-byte result.
  */
 void SHA256_Final(uint8_t hash[32], SHA256_CTX *ctx) {
     static const uint8_t PADDING[64] = { 0x80 };
     uint8_t bits[8];
     uint64_t cnt = ctx->count;
 
-    /* Convert bit count to big-endian byte array */
+    /* Store bit count as big-endian */
     for (int i = 0; i < 8; i++) {
         bits[7 - i] = (uint8_t)(cnt >> (i * 8));
     }
@@ -192,12 +189,12 @@ void SHA256_Final(uint8_t hash[32], SHA256_CTX *ctx) {
     size_t idx = (ctx->count >> 3) & 0x3F;
     size_t padLen = (idx < 56) ? (56 - idx) : (120 - idx);
 
-    /* Pad with a single 1 bit then zeros */
+    /* Pad with 0x80 then zeros */
     SHA256_Update(ctx, PADDING, padLen);
     /* Append length */
     SHA256_Update(ctx, bits, 8);
 
-    /* Convert state to big-endian output */
+    /* Output state in big-endian */
     for (int i = 0; i < 8; i++) {
         hash[4*i    ] = (uint8_t)(ctx->state[i] >> 24);
         hash[4*i + 1] = (uint8_t)(ctx->state[i] >> 16);
@@ -208,8 +205,7 @@ void SHA256_Final(uint8_t hash[32], SHA256_CTX *ctx) {
 
 /*
  * SHA256_Buf:
- *   Convenience wrapper: compute SHA-256 digest of a single buffer.
- *   Equivalent to: Init, Update with entire buffer, Final.
+ *   Convenience wrapper: compute SHA-256 digest of a buffer in one call.
  */
 void SHA256_Buf(const uint8_t *data, size_t len, uint8_t hash[32]) {
     SHA256_CTX ctx;
@@ -220,13 +216,13 @@ void SHA256_Buf(const uint8_t *data, size_t len, uint8_t hash[32]) {
 
 /*
  * HMAC-SHA256:
- *   Computes HMAC using SHA-256:
- *     HMAC(K, D) = SHA256((K^opad) || SHA256((K^ipad) || D))
+ *   Compute HMAC using SHA-256:
+ *     HMAC(K, D) = SHA256((K^opad) ∥ SHA256((K^ipad) ∥ D))
  *   key: pointer to key bytes
- *   keylen: length of key in bytes
+ *   keylen: key length in bytes
  *   data: pointer to message bytes
- *   datalen: length of message in bytes
- *   mac: output buffer (must be at least 32 bytes)
+ *   datalen: message length in bytes
+ *   mac: output buffer (32 bytes)
  */
 void HMAC_SHA256(const uint8_t *key, size_t keylen,
                  const uint8_t *data, size_t datalen,
@@ -234,7 +230,7 @@ void HMAC_SHA256(const uint8_t *key, size_t keylen,
     uint8_t k_ipad[64], k_opad[64], tk[32];
     SHA256_CTX ctx;
 
-    /* If key is longer than block size (64), shorten it */
+    /* If key is longer than block size, shorten it */
     if (keylen > 64) {
         SHA256_CTX tctx;
         SHA256_Init(&tctx);
@@ -244,7 +240,7 @@ void HMAC_SHA256(const uint8_t *key, size_t keylen,
         keylen = 32;
     }
 
-    /* Prepare inner and outer padded keys */
+    /* Prepare inner and outer keys */
     memset(k_ipad, 0, 64);
     memset(k_opad, 0, 64);
     memcpy(k_ipad, key, keylen);
@@ -254,13 +250,13 @@ void HMAC_SHA256(const uint8_t *key, size_t keylen,
         k_opad[i] ^= 0x5cU;
     }
 
-    /* Inner hash */
+    /* Inner SHA-256 */
     SHA256_Init(&ctx);
     SHA256_Update(&ctx, k_ipad, 64);
     SHA256_Update(&ctx, data, datalen);
     SHA256_Final(tk, &ctx);
 
-    /* Outer hash */
+    /* Outer SHA-256 */
     SHA256_Init(&ctx);
     SHA256_Update(&ctx, k_opad, 64);
     SHA256_Update(&ctx, tk, 32);
@@ -270,7 +266,6 @@ void HMAC_SHA256(const uint8_t *key, size_t keylen,
 /*
  * HMAC_SHA256_Buf:
  *   Alias for HMAC_SHA256 to match yespower-opt.c usage.
- *   Signature: (key, keylen, data, datalen, mac)
  */
 void HMAC_SHA256_Buf(const uint8_t *key, size_t keylen,
                      const uint8_t *data, size_t datalen,
@@ -280,14 +275,13 @@ void HMAC_SHA256_Buf(const uint8_t *key, size_t keylen,
 
 /*
  * PBKDF2-HMAC-SHA256:
- *   Derive a key of dkLen bytes from password and salt using HMAC-SHA256, iterated 'iterations' times.
+ *   Derive a key of length dkLen bytes from password and salt.
  *   password: pointer to password bytes
  *   plen: length of password in bytes
  *   salt: pointer to salt bytes
  *   slen: length of salt in bytes
- *   iterations: iteration count (e.g. >= 1)
- *   dk: output buffer (must be at least dkLen bytes)
- *   dkLen: desired derived key length in bytes
+ *   iterations: iteration count (≥1)
+ *   dk: output buffer (dkLen bytes)
  */
 void PBKDF2_SHA256(const uint8_t *password, size_t plen,
                    const uint8_t *salt, size_t slen,
@@ -300,17 +294,17 @@ void PBKDF2_SHA256(const uint8_t *password, size_t plen,
     memcpy(salt_block, salt, slen);
 
     for (uint32_t i = 1; i <= blockCount; i++) {
-        /* salt||INT_32_BE(i) */
+        /* Construct salt || INT_32_BE(i) */
         salt_block[slen  ] = (uint8_t)(i >> 24);
         salt_block[slen+1] = (uint8_t)(i >> 16);
         salt_block[slen+2] = (uint8_t)(i >>  8);
         salt_block[slen+3] = (uint8_t)(i      );
 
-        /* U_1 = HMAC(password, salt_block) */
+        /* U_1 = HMAC_SHA256(password, salt_block) */
         HMAC_SHA256(password, plen, salt_block, slen + 4, U);
         memcpy(T, U, 32);
 
-        /* U_j = HMAC(password, U_{j-1}); T ^= U_j */
+        /* U_j = HMAC_SHA256(password, U_{j-1}); T ^= U_j */
         for (uint64_t j = 2; j <= iterations; j++) {
             HMAC_SHA256(password, plen, U, 32, U);
             for (int k = 0; k < 32; k++) {
