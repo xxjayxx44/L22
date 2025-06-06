@@ -1,26 +1,25 @@
 #include <stdint.h>
 #include <string.h>
-#include <stdlib.h>
 
-// Basic SHA-256 operations (rotate right, choice, majority, etc.)
-#define ROTR(x,n)   (((x) >> (n)) | ((x) << (32-(n))))
-#define Ch(x,y,z)   ((z) ^ ((x) & ((y) ^ (z))))
-#define Maj(x,y,z)  (((x) & (y)) | ((z) & ((x) | (y))))
-#define EP0(x)      (ROTR(x, 2) ^ ROTR(x,13) ^ ROTR(x,22))
-#define EP1(x)      (ROTR(x, 6) ^ ROTR(x,11) ^ ROTR(x,25))
-#define SIG0(x)     (ROTR(x, 7) ^ ROTR(x,18) ^ ((x) >> 3))
-#define SIG1(x)     (ROTR(x,17) ^ ROTR(x,19) ^ ((x) >> 10))
+// -- SHA-256 implementation --
 
-// SHA-256 context
 typedef struct {
     uint32_t state[8];
-    uint64_t bitlen;
-    uint8_t data[64];
-    uint32_t datalen;
+    uint64_t count;    // number of bits, mod 2^64
+    uint8_t buffer[64];
 } SHA256_CTX;
 
-// SHA-256 round constants (first 64 of the fractional parts of cube roots of primes):contentReference[oaicite:12]{index=12}
-static const uint32_t K[64] = {
+// Rotate right (32-bit)
+#define ROTR(x,n) (((x)>>(n))|((x)<<(32-(n))))
+#define CH(x,y,z) (((x)&(y))^((~(x))&(z)))
+#define MAJ(x,y,z) (((x)&(y))^((x)&(z))^((y)&(z)))
+#define EP0(x) (ROTR(x,2) ^ ROTR(x,13) ^ ROTR(x,22))
+#define EP1(x) (ROTR(x,6) ^ ROTR(x,11) ^ ROTR(x,25))
+#define SIG0(x) (ROTR(x,7) ^ ROTR(x,18) ^ ((x) >> 3))
+#define SIG1(x) (ROTR(x,17) ^ ROTR(x,19) ^ ((x) >> 10))
+
+// SHA-256 constants (first 32 bits of cube roots of first 64 primes)
+static const uint32_t K256[64] = {
     0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,
     0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
     0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,
@@ -39,52 +38,64 @@ static const uint32_t K[64] = {
     0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 };
 
-// SHA-256 transform: process one 512-bit block
-static void sha256_transform(SHA256_CTX *ctx, const uint8_t data[])
-{
-    uint32_t W[64], a,b,c,d,e,f,g,h,t1,t2;
-    int i;
-    // Prepare message schedule W
-    for (i = 0; i < 16; i++) {
-        W[i]  = (uint32_t)data[i*4] << 24;
-        W[i] |= (uint32_t)data[i*4+1] << 16;
-        W[i] |= (uint32_t)data[i*4+2] << 8;
-        W[i] |= (uint32_t)data[i*4+3];
+static void SHA256_Transform(uint32_t state[8], const uint8_t block[64]) {
+    uint32_t W[64];
+    uint32_t a,b,c,d,e,f,g,h;
+    a = state[0]; b = state[1]; c = state[2]; d = state[3];
+    e = state[4]; f = state[5]; g = state[6]; h = state[7];
+
+    // Message schedule (big-endian input)
+    for(int i = 0; i < 16; ++i) {
+        W[i] = ((uint32_t)block[4*i] << 24) | ((uint32_t)block[4*i+1] << 16) |
+               ((uint32_t)block[4*i+2] <<  8) | ((uint32_t)block[4*i+3]);
     }
-    for (i = 16; i < 64; i++) {
+    for(int i = 16; i < 64; ++i) {
         W[i] = SIG1(W[i-2]) + W[i-7] + SIG0(W[i-15]) + W[i-16];
     }
-    // Initialize working variables with current hash state
-    a = ctx->state[0];  b = ctx->state[1];
-    c = ctx->state[2];  d = ctx->state[3];
-    e = ctx->state[4];  f = ctx->state[5];
-    g = ctx->state[6];  h = ctx->state[7];
-    // Main loop (64 rounds)
-    for (i = 0; i < 64; i++) {
-        t1 = h + EP1(e) + Ch(e,f,g) + K[i] + W[i];
-        t2 = EP0(a) + Maj(a,b,c);
-        h = g; g = f; f = e;
-        e = d + t1;
-        d = c; c = b; b = a;
-        a = t1 + t2;
+
+    // Compression function: 64 rounds unrolled in 8-round blocks for ILP
+    for(int i = 0; i < 64; i += 8) {
+        uint32_t T1, T2;
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i]   + W[i];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i+1] + W[i+1];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i+2] + W[i+2];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i+3] + W[i+3];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i+4] + W[i+4];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i+5] + W[i+5];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i+6] + W[i+6];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
+
+        T1 = h + EP1(e) + CH(e,f,g) + K256[i+7] + W[i+7];
+        T2 = EP0(a) + MAJ(a,b,c); h = g; g = f; f = e; e = d + T1;
+        d = c; c = b; b = a; a = T1 + T2;
     }
-    // Add the working vars back into state
-    ctx->state[0] += a;
-    ctx->state[1] += b;
-    ctx->state[2] += c;
-    ctx->state[3] += d;
-    ctx->state[4] += e;
-    ctx->state[5] += f;
-    ctx->state[6] += g;
-    ctx->state[7] += h;
+
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
 }
 
 // Initialize SHA-256 context
-void SHA256_Init(SHA256_CTX *ctx)
-{
-    ctx->datalen = 0;
-    ctx->bitlen = 0;
-    // Initial hash values (first 32 bits of sqrt of first 8 primes):contentReference[oaicite:13]{index=13} 
+void SHA256_Init(SHA256_CTX *ctx) {
+    // Initial hash values (first 32 bits of sqrt primes)
     ctx->state[0] = 0x6a09e667;
     ctx->state[1] = 0xbb67ae85;
     ctx->state[2] = 0x3c6ef372;
@@ -93,131 +104,111 @@ void SHA256_Init(SHA256_CTX *ctx)
     ctx->state[5] = 0x9b05688c;
     ctx->state[6] = 0x1f83d9ab;
     ctx->state[7] = 0x5be0cd19;
+    ctx->count = 0;
+    memset(ctx->buffer, 0, 64);
 }
 
-// Update SHA-256 with data bytes
-void SHA256_Update(SHA256_CTX *ctx, const uint8_t data[], size_t len)
-{
+// Update SHA-256 with data
+void SHA256_Update(SHA256_CTX *ctx, const uint8_t *data, size_t len) {
+    size_t idx = (ctx->count >> 3) & 0x3F;
+    ctx->count += (uint64_t)len << 3;
+    size_t part = 64 - idx;
     size_t i = 0;
-    // Update bit length (in bits)
-    ctx->bitlen += (uint64_t)len << 3;
-    // Fill existing buffer if needed
-    if (ctx->datalen && ctx->datalen + len >= 64) {
-        size_t fill = 64 - ctx->datalen;
-        memcpy(ctx->data + ctx->datalen, data, fill);
-        sha256_transform(ctx, ctx->data);
-        ctx->datalen = 0;
-        i += fill;
+    if (len >= part) {
+        memcpy(&ctx->buffer[idx], data, part);
+        SHA256_Transform(ctx->state, ctx->buffer);
+        for (i = part; i + 63 < len; i += 64) {
+            SHA256_Transform(ctx->state, data + i);
+        }
+        idx = 0;
     }
-    // Process full 64-byte chunks directly from input
-    for (; i + 63 < len; i += 64) {
-        sha256_transform(ctx, data + i);
+    memcpy(&ctx->buffer[idx], data + i, len - i);
+}
+
+// Finalize SHA-256 and output 32-byte hash (big-endian)
+void SHA256_Final(uint8_t hash[32], SHA256_CTX *ctx) {
+    static const uint8_t PADDING[64] = { 0x80 };
+    uint8_t bits[8];
+    uint64_t cnt = ctx->count;
+    for(int i = 0; i < 8; i++) {
+        bits[7-i] = (uint8_t)(cnt >> (i * 8));
     }
-    // Copy remaining bytes to buffer
-    if (i < len) {
-        ctx->datalen = len - i;
-        memcpy(ctx->data, data + i, ctx->datalen);
+    size_t idx = (ctx->count >> 3) & 0x3F;
+    size_t padLen = (idx < 56) ? (56 - idx) : (120 - idx);
+    SHA256_Update(ctx, PADDING, padLen);
+    SHA256_Update(ctx, bits, 8);
+    for(int i = 0; i < 8; i++) {
+        hash[i*4    ] = (uint8_t)(ctx->state[i] >> 24);
+        hash[i*4 + 1] = (uint8_t)(ctx->state[i] >> 16);
+        hash[i*4 + 2] = (uint8_t)(ctx->state[i] >>  8);
+        hash[i*4 + 3] = (uint8_t)(ctx->state[i]      );
     }
 }
 
-// Finalize SHA-256 and produce the digest (32 bytes)
-void SHA256_Final(uint8_t hash[], SHA256_CTX *ctx)
-{
-    uint32_t i = ctx->datalen;
-    // Append the bit '1' (0x80) and pad with zeros
-    if (i < 56) {
-        ctx->data[i++] = 0x80;
-        while (i < 56) ctx->data[i++] = 0x00;
-    } else {
-        ctx->data[i++] = 0x80;
-        while (i < 64) ctx->data[i++] = 0x00;
-        sha256_transform(ctx, ctx->data);
-        memset(ctx->data, 0, 56);
-    }
-    // Append 64-bit big-endian bit length
-    for (i = 0; i < 8; i++) {
-        ctx->data[63 - i] = (uint8_t)(ctx->bitlen >> (i * 8));
-    }
-    sha256_transform(ctx, ctx->data);
-    // Convert state to big-endian byte array
-    for (i = 0; i < 8; i++) {
-        hash[i*4]     = (ctx->state[i] >> 24) & 0xFF;
-        hash[i*4 + 1] = (ctx->state[i] >> 16) & 0xFF;
-        hash[i*4 + 2] = (ctx->state[i] >>  8) & 0xFF;
-        hash[i*4 + 3] =  ctx->state[i]        & 0xFF;
-    }
-}
+// -- HMAC-SHA256 implementation --
 
-// Compute HMAC-SHA256: out must be 32 bytes
+// Compute HMAC-SHA256: MAC = SHA256(K_opad || SHA256(K_ipad || data))
 void HMAC_SHA256(const uint8_t *key, size_t keylen,
                  const uint8_t *data, size_t datalen,
-                 uint8_t out[32])
-{
-    uint8_t key_pad[64];
-    uint8_t inner_hash[32];
-    SHA256_CTX ctx;
-    // Prepare key (hash if longer than block, else pad with zeros)
+                 uint8_t *mac) {
+    uint8_t k_ipad[64], k_opad[64], tk[32];
+    // If key > block size, shorten it
     if (keylen > 64) {
-        SHA256_Init(&ctx);
-        SHA256_Update(&ctx, key, keylen);
-        SHA256_Final(key_pad, &ctx);
-        memset(key_pad + 32, 0, 32);
-    } else {
-        memcpy(key_pad, key, keylen);
-        memset(key_pad + keylen, 0, 64 - keylen);
+        SHA256_CTX tctx;
+        SHA256_Init(&tctx);
+        SHA256_Update(&tctx, key, keylen);
+        SHA256_Final(tk, &tctx);
+        key = tk;
+        keylen = 32;
     }
-    // Inner hash: ipad = 0x36
-    for (int i = 0; i < 64; i++) key_pad[i] ^= 0x36;
+    memset(k_ipad, 0, 64);
+    memset(k_opad, 0, 64);
+    memcpy(k_ipad, key, keylen);
+    memcpy(k_opad, key, keylen);
+    for(int i = 0; i < 64; i++) {
+        k_ipad[i] ^= 0x36;
+        k_opad[i] ^= 0x5c;
+    }
+    // Inner hash
+    SHA256_CTX ctx;
     SHA256_Init(&ctx);
-    SHA256_Update(&ctx, key_pad, 64);
+    SHA256_Update(&ctx, k_ipad, 64);
     SHA256_Update(&ctx, data, datalen);
-    SHA256_Final(inner_hash, &ctx);
-    // Outer hash: opad = 0x5c
-    for (int i = 0; i < 64; i++) key_pad[i] ^= (0x36 ^ 0x5c);  // undo ipad and apply opad
+    SHA256_Final(tk, &ctx);
+    // Outer hash
     SHA256_Init(&ctx);
-    SHA256_Update(&ctx, key_pad, 64);
-    SHA256_Update(&ctx, inner_hash, 32);
-    SHA256_Final(out, &ctx);
+    SHA256_Update(&ctx, k_opad, 64);
+    SHA256_Update(&ctx, tk, 32);
+    SHA256_Final(mac, &ctx);
 }
 
-// PBKDF2-HMAC-SHA256: derive key of length outlen bytes from password and salt
-// Iteration count c (typically thousands).  out and salt can overlap safely.
-void PBKDF2_HMAC_SHA256(const char *password, const uint8_t *salt, size_t salt_len,
-                       uint32_t iterations, uint8_t *out, size_t outlen)
-{
-    uint32_t pass_len = strlen(password);
+// -- PBKDF2-HMAC-SHA256 implementation --
+// Derives key of length dkLen bytes using iteration count c.
+void PBKDF2_SHA256(const uint8_t *password, size_t plen,
+                   const uint8_t *salt, size_t slen,
+                   uint64_t iterations, uint8_t *dk, size_t dkLen) {
+    uint32_t blockCount = (dkLen + 31) / 32;
     uint8_t U[32], T[32];
-    uint8_t be_i[4];
-    SHA256_CTX ctx;
-    uint8_t *salt_block;
-    // Allocate salt||block buffer
-    salt_block = (uint8_t*)malloc(salt_len + 4);
-    if (!salt_block) return;
-    memcpy(salt_block, salt, salt_len);
-    size_t derived = 0;
-    uint32_t block = 1, i, j;
-    while (derived < outlen) {
-        // Compute U_1 = HMAC(pass, salt || INT_32_BE(block))
-        be_i[0] = (block >> 24) & 0xFF;
-        be_i[1] = (block >> 16) & 0xFF;
-        be_i[2] = (block >>  8) & 0xFF;
-        be_i[3] =  block        & 0xFF;
-        memcpy(salt_block + salt_len, be_i, 4);
-        HMAC_SHA256((const uint8_t*)password, pass_len,
-                    salt_block, salt_len + 4, U);
+    uint8_t salt_block[slen + 4];
+    memcpy(salt_block, salt, slen);
+    for(uint32_t i = 1; i <= blockCount; i++) {
+        // salt || block index (big-endian)
+        salt_block[slen  ] = (uint8_t)(i >> 24);
+        salt_block[slen+1] = (uint8_t)(i >> 16);
+        salt_block[slen+2] = (uint8_t)(i >> 8);
+        salt_block[slen+3] = (uint8_t)(i);
+        // U_1 = HMAC(password, salt||i)
+        HMAC_SHA256(password, plen, salt_block, slen+4, U);
         memcpy(T, U, 32);
-        // U_j = HMAC(pass, U_{j-1}), T = XOR of all U_j
-        for (j = 2; j <= iterations; j++) {
-            HMAC_SHA256((const uint8_t*)password, pass_len, U, 32, U);
-            for (i = 0; i < 32; i++) {
-                T[i] ^= U[i];
+        // U_2 through U_c
+        for(uint64_t j = 2; j <= iterations; j++) {
+            HMAC_SHA256(password, plen, U, 32, U);
+            for(int k = 0; k < 32; k++) {
+                T[k] ^= U[k];
             }
         }
-        // Copy T to output (may be partial on last block)
-        size_t to_copy = (derived + 32 > outlen) ? (outlen - derived) : 32;
-        memcpy(out + derived, T, to_copy);
-        derived += to_copy;
-        block++;
+        size_t offset = (i-1)*32;
+        size_t clen = (dkLen - offset >= 32) ? 32 : (dkLen - offset);
+        memcpy(dk + offset, T, clen);
     }
-    free(salt_block);
 }
