@@ -96,6 +96,7 @@
 
 #include "insecure_memzero.h"
 #include "sha256.h"
+#include "sha256-parallel.h"
 #include "sysendian.h"
 
 #include "yespower.h"
