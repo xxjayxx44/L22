@@ -1,10 +1,9 @@
 /* yespower-1.0.1/sha256.c – Optimized for high-throughput mining
  * Complete FIXED Implementation with HMAC and PBKDF2
- * 
- * All original function names, structures, and external dependencies remain unchanged.
- * The core SHA-256 compression loop is fully unrolled to maximize instructions per cycle,
- * eliminating loop overhead. Message-schedule expansion and working-variable updates
- * are done in-place for speed. This yields a 20–50× improvement in repeated hashing tasks.
+ *
+ * This file replaces the original sha256.c in L22. All public functions
+ * retain their original signatures and are defined exactly once. No
+ * duplicate or conflicting definitions are present.
  */
 
 #include <assert.h>
@@ -66,12 +65,12 @@ static const uint32_t initial_state[8] = {
 /* Padding byte */
 static const uint8_t PAD[64] = { 0x80 };
 
-/* Core SHA-256 transform (fully unrolled for performance) */
+/* Core SHA-256 transform: fully unrolled for 64 rounds */
 static void sha256_transform(uint32_t state[8], const uint8_t block[64]) {
     uint32_t W[64];
     uint32_t a,b,c,d,e,f,g,h,T1,T2;
 
-    // Message schedule (big-endian decode)
+    /* Message schedule: big-endian decode */
     for (int i = 0; i < 16; i++) {
         W[i] = be32dec(&block[i*4]);
     }
@@ -81,396 +80,267 @@ static void sha256_transform(uint32_t state[8], const uint8_t block[64]) {
         W[i] = W[i-16] + s0 + W[i-7] + s1;
     }
 
-    // Initialize working vars
+    /* Working variables */
     a = state[0]; b = state[1]; c = state[2]; d = state[3];
     e = state[4]; f = state[5]; g = state[6]; h = state[7];
 
-    // Unrolled 64-round loop
-    // Round 0
-    T1 = h + S1(e) + Ch(e,f,g) + K256[0]  + W[0];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 1
-    T1 = h + S1(e) + Ch(e,f,g) + K256[1]  + W[1];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 2
-    T1 = h + S1(e) + Ch(e,f,g) + K256[2]  + W[2];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 3
-    T1 = h + S1(e) + Ch(e,f,g) + K256[3]  + W[3];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 4
-    T1 = h + S1(e) + Ch(e,f,g) + K256[4]  + W[4];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 5
-    T1 = h + S1(e) + Ch(e,f,g) + K256[5]  + W[5];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 6
-    T1 = h + S1(e) + Ch(e,f,g) + K256[6]  + W[6];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 7
-    T1 = h + S1(e) + Ch(e,f,g) + K256[7]  + W[7];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 8
-    T1 = h + S1(e) + Ch(e,f,g) + K256[8]  + W[8];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 9
-    T1 = h + S1(e) + Ch(e,f,g) + K256[9]  + W[9];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 10
-    T1 = h + S1(e) + Ch(e,f,g) + K256[10] + W[10];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 11
-    T1 = h + S1(e) + Ch(e,f,g) + K256[11] + W[11];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 12
-    T1 = h + S1(e) + Ch(e,f,g) + K256[12] + W[12];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 13
-    T1 = h + S1(e) + Ch(e,f,g) + K256[13] + W[13];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 14
-    T1 = h + S1(e) + Ch(e,f,g) + K256[14] + W[14];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 15
-    T1 = h + S1(e) + Ch(e,f,g) + K256[15] + W[15];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 16
-    T1 = h + S1(e) + Ch(e,f,g) + K256[16] + W[16];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 17
-    T1 = h + S1(e) + Ch(e,f,g) + K256[17] + W[17];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 18
-    T1 = h + S1(e) + Ch(e,f,g) + K256[18] + W[18];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 19
-    T1 = h + S1(e) + Ch(e,f,g) + K256[19] + W[19];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 20
-    T1 = h + S1(e) + Ch(e,f,g) + K256[20] + W[20];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 21
-    T1 = h + S1(e) + Ch(e,f,g) + K256[21] + W[21];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 22
-    T1 = h + S1(e) + Ch(e,f,g) + K256[22] + W[22];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 23
-    T1 = h + S1(e) + Ch(e,f,g) + K256[23] + W[23];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 24
-    T1 = h + S1(e) + Ch(e,f,g) + K256[24] + W[24];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 25
-    T1 = h + S1(e) + Ch(e,f,g) + K256[25] + W[25];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 26
-    T1 = h + S1(e) + Ch(e,f,g) + K256[26] + W[26];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 27
-    T1 = h + S1(e) + Ch(e,f,g) + K256[27] + W[27];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 28
-    T1 = h + S1(e) + Ch(e,f,g) + K256[28] + W[28];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 29
-    T1 = h + S1(e) + Ch(e,f,g) + K256[29] + W[29];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 30
-    T1 = h + S1(e) + Ch(e,f,g) + K256[30] + W[30];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 31
-    T1 = h + S1(e) + Ch(e,f,g) + K256[31] + W[31];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 32
-    T1 = h + S1(e) + Ch(e,f,g) + K256[32] + W[32];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 33
-    T1 = h + S1(e) + Ch(e,f,g) + K256[33] + W[33];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 34
-    T1 = h + S1(e) + Ch(e,f,g) + K256[34] + W[34];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 35
-    T1 = h + S1(e) + Ch(e,f,g) + K256[35] + W[35];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 36
-    T1 = h + S1(e) + Ch(e,f,g) + K256[36] + W[36];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 37
-    T1 = h + S1(e) + Ch(e,f,g) + K256[37] + W[37];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 38
-    T1 = h + S1(e) + Ch(e,f,g) + K256[38] + W[38];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 39
-    T1 = h + S1(e) + Ch(e,f,g) + K256[39] + W[39];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 40
-    T1 = h + S1(e) + Ch(e,f,g) + K256[40] + W[40];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 41
-    T1 = h + S1(e) + Ch(e,f,g) + K256[41] + W[41];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 42
-    T1 = h + S1(e) + Ch(e,f,g) + K256[42] + W[42];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 43
-    T1 = h + S1(e) + Ch(e,f,g) + K256[43] + W[43];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 44
-    T1 = h + S1(e) + Ch(e,f,g) + K256[44] + W[44];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 45
-    T1 = h + S1(e) + Ch(e,f,g) + K256[45] + W[45];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 46
-    T1 = h + S1(e) + Ch(e,f,g) + K256[46] + W[46];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 47
-    T1 = h + S1(e) + Ch(e,f,g) + K256[47] + W[47];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 48
-    T1 = h + S1(e) + Ch(e,f,g) + K256[48] + W[48];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 49
-    T1 = h + S1(e) + Ch(e,f,g) + K256[49] + W[49];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 50
-    T1 = h + S1(e) + Ch(e,f,g) + K256[50] + W[50];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 51
-    T1 = h + S1(e) + Ch(e,f,g) + K256[51] + W[51];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 52
-    T1 = h + S1(e) + Ch(e,f,g) + K256[52] + W[52];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 53
-    T1 = h + S1(e) + Ch(e,f,g) + K256[53] + W[53];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 54
-    T1 = h + S1(e) + Ch(e,f,g) + K256[54] + W[54];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 55
-    T1 = h + S1(e) + Ch(e,f,g) + K256[55] + W[55];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 56
-    T1 = h + S1(e) + Ch(e,f,g) + K256[56] + W[56];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 57
-    T1 = h + S1(e) + Ch(e,f,g) + K256[57] + W[57];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 58
-    T1 = h + S1(e) + Ch(e,f,g) + K256[58] + W[58];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 59
-    T1 = h + S1(e) + Ch(e,f,g) + K256[59] + W[59];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 60
-    T1 = h + S1(e) + Ch(e,f,g) + K256[60] + W[60];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 61
-    T1 = h + S1(e) + Ch(e,f,g) + K256[61] + W[61];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 62
-    T1 = h + S1(e) + Ch(e,f,g) + K256[62] + W[62];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Round 63
-    T1 = h + S1(e) + Ch(e,f,g) + K256[63] + W[63];
-    T2 = S0(a) + Maj(a,b,c);
-    h = g; g = f; f = e; e = d + T1;
-    d = c; c = b; b = a; a = T1 + T2;
-
-    // Update state
+    /* Round  0 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[0]  + W[0];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  1 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[1]  + W[1];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  2 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[2]  + W[2];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  3 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[3]  + W[3];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  4 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[4]  + W[4];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  5 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[5]  + W[5];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  6 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[6]  + W[6];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  7 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[7]  + W[7];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  8 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[8]  + W[8];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round  9 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[9]  + W[9];   T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 10 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[10] + W[10];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 11 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[11] + W[11];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 12 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[12] + W[12];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 13 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[13] + W[13];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 14 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[14] + W[14];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 15 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[15] + W[15];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 16 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[16] + W[16];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 17 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[17] + W[17];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 18 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[18] + W[18];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 19 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[19] + W[19];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 20 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[20] + W[20];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 21 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[21] + W[21];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 22 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[22] + W[22];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 23 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[23] + W[23];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 24 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[24] + W[24];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 25 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[25] + W[25];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 26 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[26] + W[26];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 27 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[27] + W[27];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 28 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[28] + W[28];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 29 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[29] + W[29];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 30 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[30] + W[30];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 31 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[31] + W[31];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 32 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[32] + W[32];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 33 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[33] + W[33];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 34 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[34] + W[34];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 35 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[35] + W[35];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 36 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[36] + W[36];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 37 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[37] + W[37];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 38 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[38] + W[38];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 39 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[39] + W[39];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 40 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[40] + W[40];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 41 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[41] + W[41];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 42 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[42] + W[42];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 43 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[43] + W[43];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 44 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[44] + W[44];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 45 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[45] + W[45];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 46 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[46] + W[46];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 47 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[47] + W[47];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 48 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[48] + W[48];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 49 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[49] + W[49];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 50 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[50] + W[50];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 51 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[51] + W[51];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 52 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[52] + W[52];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 53 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[53] + W[53];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 54 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[54] + W[54];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 55 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[55] + W[55];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 56 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[56] + W[56];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 57 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[57] + W[57];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 58 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[58] + W[58];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 59 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[59] + W[59];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 60 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[60] + W[60];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 61 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[61] + W[61];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 62 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[62] + W[62];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Round 63 */
+    T1 = h + S1(e) + Ch(e,f,g) + K256[63] + W[63];  T2 = S0(a) + Maj(a,b,c);
+    h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2;
+
+    /* Update state */
     state[0] += a;
     state[1] += b;
     state[2] += c;
