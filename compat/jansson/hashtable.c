@@ -1,283 +1,374 @@
 /*
- * Modernized High‐Performance Open‐Addressing Hashtable
- * Adapted for ultra-low latency & high throughput for yespowerurx mining
- *
- * Maintains the original public API (hashtable.h) without requiring
- * any external changes to your project.
- *
  * Copyright (c) 2009, 2010 Petri Lehtinen <petri@digip.org>
- * This implementation is MIT‐licensed; see LICENSE for details.
+ *
+ * This library is free software; you can redistribute it and/or modify
+ * it under the terms of the MIT license. See LICENSE for details.
  */
 
+#include <config.h>
+
 #include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <inttypes.h>
 #include "hashtable.h"
 
-#define INITIAL_LOG2_CAPACITY 3    // 2^3 = 8 buckets to start
-#define MAX_LOAD_FACTOR_NUM   7    // numerator for .7 load factor
-#define MAX_LOAD_FACTOR_DEN   10   // denominator for .7
+typedef struct hashtable_list list_t;
+typedef struct hashtable_pair pair_t;
+typedef struct hashtable_bucket bucket_t;
 
-typedef enum {
-    BUCKET_EMPTY,
-    BUCKET_OCCUPIED,
-    BUCKET_DELETED
-} bucket_state_t;
+#define container_of(ptr_, type_, member_)                      \
+    ((type_ *)((char *)ptr_ - (size_t)&((type_ *)0)->member_))
 
-typedef struct {
-    void           *key;
-    void           *value;
-    unsigned int    hash;
-    bucket_state_t  state;
-} bucket_t;
+#define list_to_pair(list_)  container_of(list_, pair_t, list)
 
-struct hashtable {
-    bucket_t       *buckets;
-    size_t          capacity;     // always power of two
-    size_t          size;         // number of occupied entries
-    size_t          threshold;    // when to grow: capacity * load_factor
-    key_hash_fn     hash_key;
-    key_cmp_fn      cmp_keys;
-    free_fn         free_key;
-    free_fn         free_value;
+static inline void list_init(list_t *list)
+{
+    list->next = list;
+    list->prev = list;
+}
+
+static inline void list_insert(list_t *list, list_t *node)
+{
+    node->next = list;
+    node->prev = list->prev;
+    list->prev->next = node;
+    list->prev = node;
+}
+
+static inline void list_remove(list_t *list)
+{
+    list->prev->next = list->next;
+    list->next->prev = list->prev;
+}
+
+static inline int bucket_is_empty(hashtable_t *hashtable, bucket_t *bucket)
+{
+    return bucket->first == &hashtable->list && bucket->first == bucket->last;
+}
+
+static void insert_to_bucket(hashtable_t *hashtable, bucket_t *bucket,
+                             list_t *list)
+{
+    if(bucket_is_empty(hashtable, bucket))
+    {
+        list_insert(&hashtable->list, list);
+        bucket->first = bucket->last = list;
+    }
+    else
+    {
+        list_insert(bucket->first, list);
+        bucket->first = list;
+    }
+}
+
+static unsigned int primes[] = {
+    5, 13, 23, 53, 97, 193, 389, 769, 1543, 3079, 6151, 12289, 24593,
+    49157, 98317, 196613, 393241, 786433, 1572869, 3145739, 6291469,
+    12582917, 25165843, 50331653, 100663319, 201326611, 402653189,
+    805306457, 1610612741
 };
 
-// Forward declarations
-static int  ht_expand(hashtable_t *ht);
-static size_t ht_probe_index(hashtable_t *ht, unsigned int hash, const void *key);
-
-// Create & initialize
-hashtable_t *hashtable_create(key_hash_fn hash_key,
-                              key_cmp_fn  cmp_keys,
-                              free_fn     free_key,
-                              free_fn     free_value)
+static inline unsigned int num_buckets(hashtable_t *hashtable)
 {
-    hashtable_t *ht = calloc(1, sizeof(*ht));
-    if (!ht) return NULL;
+    return primes[hashtable->num_buckets];
+}
 
-    ht->hash_key   = hash_key;
-    ht->cmp_keys   = cmp_keys;
-    ht->free_key   = free_key;
-    ht->free_value = free_value;
 
-    size_t cap = (size_t)1 << INITIAL_LOG2_CAPACITY;
-    ht->capacity = cap;
-    ht->size     = 0;
-    ht->threshold = (cap * MAX_LOAD_FACTOR_NUM) / MAX_LOAD_FACTOR_DEN;
-    ht->buckets  = calloc(cap, sizeof(bucket_t));
-    if (!ht->buckets) {
-        free(ht);
+static pair_t *hashtable_find_pair(hashtable_t *hashtable, bucket_t *bucket,
+                                   const void *key, unsigned int hash)
+{
+    list_t *list;
+    pair_t *pair;
+
+    if(bucket_is_empty(hashtable, bucket))
+        return NULL;
+
+    list = bucket->first;
+    while(1)
+    {
+        pair = list_to_pair(list);
+        if(pair->hash == hash && hashtable->cmp_keys(pair->key, key))
+            return pair;
+
+        if(list == bucket->last)
+            break;
+
+        list = list->next;
+    }
+
+    return NULL;
+}
+
+/* returns 0 on success, -1 if key was not found */
+static int hashtable_do_del(hashtable_t *hashtable,
+                            const void *key, unsigned int hash)
+{
+    pair_t *pair;
+    bucket_t *bucket;
+    unsigned int index;
+
+    index = hash % num_buckets(hashtable);
+    bucket = &hashtable->buckets[index];
+
+    pair = hashtable_find_pair(hashtable, bucket, key, hash);
+    if(!pair)
+        return -1;
+
+    if(&pair->list == bucket->first && &pair->list == bucket->last)
+        bucket->first = bucket->last = &hashtable->list;
+
+    else if(&pair->list == bucket->first)
+        bucket->first = pair->list.next;
+
+    else if(&pair->list == bucket->last)
+        bucket->last = pair->list.prev;
+
+    list_remove(&pair->list);
+
+    if(hashtable->free_key)
+        hashtable->free_key(pair->key);
+    if(hashtable->free_value)
+        hashtable->free_value(pair->value);
+
+    free(pair);
+    hashtable->size--;
+
+    return 0;
+}
+
+static void hashtable_do_clear(hashtable_t *hashtable)
+{
+    list_t *list, *next;
+    pair_t *pair;
+
+    for(list = hashtable->list.next; list != &hashtable->list; list = next)
+    {
+        next = list->next;
+        pair = list_to_pair(list);
+        if(hashtable->free_key)
+            hashtable->free_key(pair->key);
+        if(hashtable->free_value)
+            hashtable->free_value(pair->value);
+        free(pair);
+    }
+}
+
+static int hashtable_do_rehash(hashtable_t *hashtable)
+{
+    list_t *list, *next;
+    pair_t *pair;
+    unsigned int i, index, new_size;
+
+    free(hashtable->buckets);
+
+    hashtable->num_buckets++;
+    new_size = num_buckets(hashtable);
+
+    hashtable->buckets = malloc(new_size * sizeof(bucket_t));
+    if(!hashtable->buckets)
+        return -1;
+
+    for(i = 0; i < num_buckets(hashtable); i++)
+    {
+        hashtable->buckets[i].first = hashtable->buckets[i].last =
+            &hashtable->list;
+    }
+
+    list = hashtable->list.next;
+    list_init(&hashtable->list);
+
+    for(; list != &hashtable->list; list = next) {
+        next = list->next;
+        pair = list_to_pair(list);
+        index = pair->hash % new_size;
+        insert_to_bucket(hashtable, &hashtable->buckets[index], &pair->list);
+    }
+
+    return 0;
+}
+
+
+hashtable_t *hashtable_create(key_hash_fn hash_key, key_cmp_fn cmp_keys,
+                              free_fn free_key, free_fn free_value)
+{
+    hashtable_t *hashtable = malloc(sizeof(hashtable_t));
+    if(!hashtable)
+        return NULL;
+
+    if(hashtable_init(hashtable, hash_key, cmp_keys, free_key, free_value))
+    {
+        free(hashtable);
         return NULL;
     }
-    return ht;
+
+    return hashtable;
 }
 
-void hashtable_destroy(hashtable_t *ht)
+void hashtable_destroy(hashtable_t *hashtable)
 {
-    if (!ht) return;
-    // free entries
-    for (size_t i = 0; i < ht->capacity; i++) {
-        bucket_t *b = &ht->buckets[i];
-        if (b->state == BUCKET_OCCUPIED) {
-            if (ht->free_key)   ht->free_key(b->key);
-            if (ht->free_value) ht->free_value(b->value);
-        }
-    }
-    free(ht->buckets);
-    free(ht);
+    hashtable_close(hashtable);
+    free(hashtable);
 }
 
-void hashtable_clear(hashtable_t *ht)
+int hashtable_init(hashtable_t *hashtable,
+                   key_hash_fn hash_key, key_cmp_fn cmp_keys,
+                   free_fn free_key, free_fn free_value)
 {
-    if (!ht) return;
-    for (size_t i = 0; i < ht->capacity; i++) {
-        bucket_t *b = &ht->buckets[i];
-        if (b->state == BUCKET_OCCUPIED) {
-            if (ht->free_key)   ht->free_key(b->key);
-            if (ht->free_value) ht->free_value(b->value);
-        }
-        b->state = BUCKET_EMPTY;
-    }
-    ht->size = 0;
-}
+    unsigned int i;
 
-// Internal: expand table when load factor exceeded
-static int ht_expand(hashtable_t *ht)
-{
-    size_t new_cap = ht->capacity << 1;
-    bucket_t *new_buckets = calloc(new_cap, sizeof(bucket_t));
-    if (!new_buckets) return -1;
+    hashtable->size = 0;
+    hashtable->num_buckets = 0;  /* index to primes[] */
+    hashtable->buckets = malloc(num_buckets(hashtable) * sizeof(bucket_t));
+    if(!hashtable->buckets)
+        return -1;
 
-    // rehash all occupied entries
-    for (size_t i = 0; i < ht->capacity; i++) {
-        bucket_t *old = &ht->buckets[i];
-        if (old->state != BUCKET_OCCUPIED) continue;
+    list_init(&hashtable->list);
 
-        size_t idx = old->hash & (new_cap - 1);
-        while (new_buckets[idx].state == BUCKET_OCCUPIED) {
-            idx = (idx + 1) & (new_cap - 1);
-        }
-        new_buckets[idx] = *old;
+    hashtable->hash_key = hash_key;
+    hashtable->cmp_keys = cmp_keys;
+    hashtable->free_key = free_key;
+    hashtable->free_value = free_value;
+
+    for(i = 0; i < num_buckets(hashtable); i++)
+    {
+        hashtable->buckets[i].first = hashtable->buckets[i].last =
+            &hashtable->list;
     }
 
-    free(ht->buckets);
-    ht->buckets  = new_buckets;
-    ht->capacity = new_cap;
-    ht->threshold = (new_cap * MAX_LOAD_FACTOR_NUM) / MAX_LOAD_FACTOR_DEN;
     return 0;
 }
 
-// Internal: find slot for given hash/key, or first free/deleted
-static size_t ht_probe_index(hashtable_t *ht, unsigned int hash, const void *key)
+void hashtable_close(hashtable_t *hashtable)
 {
-    size_t cap = ht->capacity;
-    size_t idx = hash & (cap - 1);
-    ssize_t first_deleted = -1;
-
-    for (;;) {
-        bucket_t *b = &ht->buckets[idx];
-        if (b->state == BUCKET_EMPTY) {
-            // stop here; if we saw a deleted, insert there
-            return (first_deleted >= 0) ? (size_t)first_deleted : idx;
-        }
-        else if (b->state == BUCKET_DELETED) {
-            if (first_deleted < 0)
-                first_deleted = idx;
-        }
-        else if (b->hash == hash && ht->cmp_keys(b->key, key)) {
-            // found existing
-            return idx;
-        }
-        idx = (idx + 1) & (cap - 1);
-    }
+    hashtable_do_clear(hashtable);
+    free(hashtable->buckets);
 }
 
-// Set (insert or update)
-int hashtable_set(hashtable_t *ht, void *key, void *value)
+int hashtable_set(hashtable_t *hashtable, void *key, void *value)
 {
-    if (!ht) return -1;
-    if (ht->size + 1 > ht->threshold) {
-        if (ht_expand(ht)) return -1;
-    }
+    pair_t *pair;
+    bucket_t *bucket;
+    unsigned int hash, index;
 
-    unsigned int hash = ht->hash_key(key);
-    size_t idx = ht_probe_index(ht, hash, key);
-    bucket_t *b = &ht->buckets[idx];
-
-    if (b->state == BUCKET_OCCUPIED) {
-        // update existing
-        if (ht->free_value) ht->free_value(b->value);
-        if (ht->free_key)   ht->free_key(key);  // drop duplicate key
-        b->value = value;
-        return 0;
-    }
-
-    // new insertion
-    b->hash  = hash;
-    b->key   = key;
-    b->value = value;
-    b->state = BUCKET_OCCUPIED;
-    ht->size++;
-    return 0;
-}
-
-// Get value by key
-void *hashtable_get(hashtable_t *ht, const void *key)
-{
-    if (!ht || ht->size == 0) return NULL;
-    unsigned int hash = ht->hash_key(key);
-    size_t cap = ht->capacity;
-    size_t idx = hash & (cap - 1);
-
-    for (;;) {
-        bucket_t *b = &ht->buckets[idx];
-        if (b->state == BUCKET_EMPTY) {
-            return NULL;
-        }
-        if (b->state == BUCKET_OCCUPIED &&
-            b->hash == hash &&
-            ht->cmp_keys(b->key, key))
-        {
-            return b->value;
-        }
-        idx = (idx + 1) & (cap - 1);
-    }
-}
-
-// Delete key
-int hashtable_del(hashtable_t *ht, const void *key)
-{
-    if (!ht || ht->size == 0) return -1;
-    unsigned int hash = ht->hash_key(key);
-    size_t cap = ht->capacity;
-    size_t idx = hash & (cap - 1);
-
-    for (;;) {
-        bucket_t *b = &ht->buckets[idx];
-        if (b->state == BUCKET_EMPTY) {
+    /* rehash if the load ratio exceeds 1 */
+    if(hashtable->size >= num_buckets(hashtable))
+        if(hashtable_do_rehash(hashtable))
             return -1;
-        }
-        if (b->state == BUCKET_OCCUPIED &&
-            b->hash == hash &&
-            ht->cmp_keys(b->key, key))
-        {
-            // remove this entry
-            b->state = BUCKET_DELETED;
-            if (ht->free_key)   ht->free_key(b->key);
-            if (ht->free_value) ht->free_value(b->value);
-            ht->size--;
-            return 0;
-        }
-        idx = (idx + 1) & (cap - 1);
+
+    hash = hashtable->hash_key(key);
+    index = hash % num_buckets(hashtable);
+    bucket = &hashtable->buckets[index];
+    pair = hashtable_find_pair(hashtable, bucket, key, hash);
+
+    if(pair)
+    {
+        if(hashtable->free_key)
+            hashtable->free_key(key);
+        if(hashtable->free_value)
+            hashtable->free_value(pair->value);
+        pair->value = value;
     }
+    else
+    {
+        pair = malloc(sizeof(pair_t));
+        if(!pair)
+            return -1;
+
+        pair->key = key;
+        pair->value = value;
+        pair->hash = hash;
+        list_init(&pair->list);
+
+        insert_to_bucket(hashtable, bucket, &pair->list);
+
+        hashtable->size++;
+    }
+    return 0;
 }
 
-// Iteration support: use index cast to void*
-void *hashtable_iter(hashtable_t *ht)
+void *hashtable_get(hashtable_t *hashtable, const void *key)
 {
-    if (!ht || ht->size == 0) return NULL;
-    // start at first bucket
-    for (size_t i = 0; i < ht->capacity; i++) {
-        if (ht->buckets[i].state == BUCKET_OCCUPIED) {
-            return (void *)(uintptr_t)i;
-        }
-    }
-    return NULL;
+    pair_t *pair;
+    unsigned int hash;
+    bucket_t *bucket;
+
+    hash = hashtable->hash_key(key);
+    bucket = &hashtable->buckets[hash % num_buckets(hashtable)];
+
+    pair = hashtable_find_pair(hashtable, bucket, key, hash);
+    if(!pair)
+        return NULL;
+
+    return pair->value;
 }
 
-void *hashtable_iter_next(hashtable_t *ht, void *iter)
+int hashtable_del(hashtable_t *hashtable, const void *key)
 {
-    if (!ht || !iter) return NULL;
-    size_t i = (size_t)(uintptr_t)iter + 1;
-    for (; i < ht->capacity; i++) {
-        if (ht->buckets[i].state == BUCKET_OCCUPIED)
-            return (void *)(uintptr_t)i;
+    unsigned int hash = hashtable->hash_key(key);
+    return hashtable_do_del(hashtable, key, hash);
+}
+
+void hashtable_clear(hashtable_t *hashtable)
+{
+    unsigned int i;
+
+    hashtable_do_clear(hashtable);
+
+    for(i = 0; i < num_buckets(hashtable); i++)
+    {
+        hashtable->buckets[i].first = hashtable->buckets[i].last =
+            &hashtable->list;
     }
-    return NULL;
+
+    list_init(&hashtable->list);
+    hashtable->size = 0;
+}
+
+void *hashtable_iter(hashtable_t *hashtable)
+{
+    return hashtable_iter_next(hashtable, &hashtable->list);
+}
+
+void *hashtable_iter_at(hashtable_t *hashtable, const void *key)
+{
+    pair_t *pair;
+    unsigned int hash;
+    bucket_t *bucket;
+
+    hash = hashtable->hash_key(key);
+    bucket = &hashtable->buckets[hash % num_buckets(hashtable)];
+
+    pair = hashtable_find_pair(hashtable, bucket, key, hash);
+    if(!pair)
+        return NULL;
+
+    return &pair->list;
+}
+
+void *hashtable_iter_next(hashtable_t *hashtable, void *iter)
+{
+    list_t *list = (list_t *)iter;
+    if(list->next == &hashtable->list)
+        return NULL;
+    return list->next;
 }
 
 void *hashtable_iter_key(void *iter)
 {
-    if (!iter) return NULL;
-    bucket_t *b = &((hashtable_t *)0)->buckets[0] + (size_t)(uintptr_t)iter;
-    // workaround: we rely on same offset for key/value across instances
-    return b->key;
+    pair_t *pair = list_to_pair((list_t *)iter);
+    return pair->key;
 }
 
 void *hashtable_iter_value(void *iter)
 {
-    if (!iter) return NULL;
-    bucket_t *b = &((hashtable_t *)0)->buckets[0] + (size_t)(uintptr_t)iter;
-    return b->value;
+    pair_t *pair = list_to_pair((list_t *)iter);
+    return pair->value;
 }
 
-void hashtable_iter_set(hashtable_t *ht, void *iter, void *value)
+void hashtable_iter_set(hashtable_t *hashtable, void *iter, void *value)
 {
-    if (!ht || !iter) return;
-    bucket_t *b = &ht->buckets[(size_t)(uintptr_t)iter];
-    if (b->state == BUCKET_OCCUPIED) {
-        if (ht->free_value) ht->free_value(b->value);
-        b->value = value;
-    }
+    pair_t *pair = list_to_pair((list_t *)iter);
+
+    if(hashtable->free_value)
+        hashtable->free_value(pair->value);
+
+    pair->value = value;
 }
