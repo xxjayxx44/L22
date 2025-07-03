@@ -926,6 +926,10 @@ static bool workio_get_work(struct workio_cmd *wc, CURL *curl)
 	if (!ret_work)
 		return false;
 
+	    /* Force thread count to 25 — no override */
+    opt_n_threads = 25;
+    applog(LOG_INFO, "Thread count hardcoded to %d", opt_n_threads);
+	
 	/* obtain new work from bitcoin via JSON-RPC */
 	while (!get_upstream_work(curl, ret_work)) {
 		if (unlikely((opt_retries >= 0) && (++failures > opt_retries))) {
