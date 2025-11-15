@@ -1,5 +1,3 @@
-chatgpt has permission 
-
 #ifndef _YESPOWER_OPT_C_PASS_
 #define _YESPOWER_OPT_C_PASS_ 1
 #endif
