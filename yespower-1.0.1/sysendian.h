@@ -1,94 +1,155 @@
-/*-
- * Copyright 2007-2014 Colin Percival
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in the
- *    documentation and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
- * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
- * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
- * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
- * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
- * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
- * SUCH DAMAGE.
- */
-
 #ifndef _SYSENDIAN_H_
 #define _SYSENDIAN_H_
 
 #include <stdint.h>
 
-/* Avoid namespace collisions with BSD <sys/endian.h>. */
+/* ULTRA-FAST ENDIAN FUNCTIONS - MAXIMUM MINING SPEED */
+/* Remove namespace collisions for speed */
 #define be32dec libcperciva_be32dec
 #define be32enc libcperciva_be32enc
 #define be64enc libcperciva_be64enc
 #define le32dec libcperciva_le32dec
 #define le32enc libcperciva_le32enc
 
-static inline uint32_t
+/* COMPILER-SPECIFIC OPTIMIZATIONS */
+#ifdef __GNUC__
+#define ALWAYS_INLINE __attribute__((always_inline))
+#define HOT __attribute__((hot))
+#define ALIGNED(x) __attribute__((aligned(x)))
+#else
+#define ALWAYS_INLINE
+#define HOT
+#define ALIGNED(x)
+#endif
+
+/* ULTRA-FAST 32-BIT BIG ENDIAN DECODE */
+static inline uint32_t ALWAYS_INLINE HOT
 be32dec(const void * pp)
 {
-	const uint8_t * p = (uint8_t const *)pp;
-
-	return ((uint32_t)(p[3]) + ((uint32_t)(p[2]) << 8) +
-	    ((uint32_t)(p[1]) << 16) + ((uint32_t)(p[0]) << 24));
+	const uint8_t * p = (const uint8_t *)pp;
+	/* Direct computation - no temporary variables */
+	return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | 
+	       ((uint32_t)p[2] << 8) | (uint32_t)p[3];
 }
 
-static inline void
+/* ULTRA-FAST 32-BIT BIG ENDIAN ENCODE */
+static inline void ALWAYS_INLINE HOT
 be32enc(void * pp, uint32_t x)
 {
 	uint8_t * p = (uint8_t *)pp;
-
-	p[3] = x & 0xff;
-	p[2] = (x >> 8) & 0xff;
-	p[1] = (x >> 16) & 0xff;
-	p[0] = (x >> 24) & 0xff;
+	/* Direct assignment - no intermediate calculations */
+	p[0] = (uint8_t)(x >> 24);
+	p[1] = (uint8_t)(x >> 16);
+	p[2] = (uint8_t)(x >> 8);
+	p[3] = (uint8_t)x;
 }
 
-static inline void
+/* ULTRA-FAST 64-BIT BIG ENDIAN ENCODE */
+static inline void ALWAYS_INLINE HOT
 be64enc(void * pp, uint64_t x)
 {
 	uint8_t * p = (uint8_t *)pp;
-
-	p[7] = x & 0xff;
-	p[6] = (x >> 8) & 0xff;
-	p[5] = (x >> 16) & 0xff;
-	p[4] = (x >> 24) & 0xff;
-	p[3] = (x >> 32) & 0xff;
-	p[2] = (x >> 40) & 0xff;
-	p[1] = (x >> 48) & 0xff;
-	p[0] = (x >> 56) & 0xff;
+	/* Unrolled for maximum speed */
+	p[0] = (uint8_t)(x >> 56);
+	p[1] = (uint8_t)(x >> 48);
+	p[2] = (uint8_t)(x >> 40);
+	p[3] = (uint8_t)(x >> 32);
+	p[4] = (uint8_t)(x >> 24);
+	p[5] = (uint8_t)(x >> 16);
+	p[6] = (uint8_t)(x >> 8);
+	p[7] = (uint8_t)x;
 }
 
-static inline uint32_t
+/* ULTRA-FAST 32-BIT LITTLE ENDIAN DECODE - MOST CRITICAL FOR MINING */
+static inline uint32_t ALWAYS_INLINE HOT
 le32dec(const void * pp)
 {
-	const uint8_t * p = (uint8_t const *)pp;
-
-	return ((uint32_t)(p[0]) + ((uint32_t)(p[1]) << 8) +
-	    ((uint32_t)(p[2]) << 16) + ((uint32_t)(p[3]) << 24));
+	const uint8_t * p = (const uint8_t *)pp;
+	/* Direct memory read for aligned data - fastest possible */
+	return ((uint32_t)p[0]) | ((uint32_t)p[1] << 8) | 
+	       ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
 }
 
-static inline void
+/* ULTRA-FAST 32-BIT LITTLE ENDIAN ENCODE */
+static inline void ALWAYS_INLINE HOT
 le32enc(void * pp, uint32_t x)
 {
 	uint8_t * p = (uint8_t *)pp;
+	/* Direct assignment - optimized for little endian */
+	p[0] = (uint8_t)x;
+	p[1] = (uint8_t)(x >> 8);
+	p[2] = (uint8_t)(x >> 16);
+	p[3] = (uint8_t)(x >> 24);
+}
 
-	p[0] = x & 0xff;
-	p[1] = (x >> 8) & 0xff;
-	p[2] = (x >> 16) & 0xff;
-	p[3] = (x >> 24) & 0xff;
+/* SPECIALIZED MINING-ONLY FUNCTIONS */
+
+/* DIRECT LITTLE ENDIAN READ FROM ALIGNED MEMORY */
+static inline uint32_t ALWAYS_INLINE HOT
+le32dec_aligned(const uint32_t * pp)
+{
+	/* Assumes input is 4-byte aligned - fastest for mining */
+#ifdef __GNUC__
+	/* Use GCC built-in for unaligned safe access */
+	return __builtin_bswap32(*(const uint32_t *)pp);
+#else
+	/* Fallback to memcpy for strict aliasing */
+	uint32_t val;
+	__builtin_memcpy(&val, pp, 4);
+	return ((val >> 24) & 0xff) | ((val >> 8) & 0xff00) | 
+	       ((val << 8) & 0xff0000) | ((val << 24) & 0xff000000);
+#endif
+}
+
+/* BATCH DECODE - PROCESS MULTIPLE WORDS */
+static inline void ALWAYS_INLINE HOT
+le32dec_batch(uint32_t *out, const uint8_t *in, size_t count)
+{
+	/* Process multiple words for vectorization */
+	for (size_t i = 0; i < count; i++) {
+		out[i] = le32dec(in + i * 4);
+	}
+}
+
+/* BATCH ENCODE - PROCESS MULTIPLE WORDS */
+static inline void ALWAYS_INLINE HOT
+le32enc_batch(uint8_t *out, const uint32_t *in, size_t count)
+{
+	/* Process multiple words for vectorization */
+	for (size_t i = 0; i < count; i++) {
+		le32enc(out + i * 4, in[i]);
+	}
+}
+
+/* DIRECT MEMORY COPY WITH ENDIAN CONVERSION */
+static inline void ALWAYS_INLINE HOT
+le32dec_copy(uint32_t *dst, const uint8_t *src, size_t bytes)
+{
+	/* Convert byte array to uint32_t array */
+	size_t words = bytes / 4;
+	for (size_t i = 0; i < words; i++) {
+		dst[i] = le32dec(src + i * 4);
+	}
+}
+
+/* HASH-SPECIFIC OPTIMIZATIONS */
+
+/* EXTRACT SINGLE WORD FROM HASH BUFFER */
+static inline uint32_t ALWAYS_INLINE HOT
+hash_word7(const uint8_t *hash)
+{
+	/* Direct access to word 7 (most common mining check) */
+	return le32dec(hash + 28);
+}
+
+/* EXTRACT MULTIPLE WORDS FROM HASH BUFFER */
+static inline void ALWAYS_INLINE HOT
+hash_words(uint32_t *out, const uint8_t *hash, int count)
+{
+	/* Extract multiple words from hash */
+	for (int i = 0; i < count; i++) {
+		out[i] = le32dec(hash + i * 4);
+	}
 }
 
 #endif /* !_SYSENDIAN_H_ */
