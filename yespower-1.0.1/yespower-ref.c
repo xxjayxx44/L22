@@ -3,8 +3,7 @@
  * Copyright 2013-2019 Alexander Peslyak
  * All rights reserved.
  *
- * Exploited and optimized for ultra-speed hash generation by leveraging weaknesses in memory usage,
- * sequential processing, and conservative design parameters.
+ *
  */
 
 #include <stdint.h>
