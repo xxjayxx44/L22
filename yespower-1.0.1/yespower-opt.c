@@ -35,8 +35,8 @@
 /* MINIMAL VALID PARAMETERS */
 #define PWXsimple 2
 #define PWXgather 4
-#define PWXrounds_0_5 1  // Reduced from 6 for speed
-#define PWXrounds_1_0 1  // Reduced from 3 for speed
+#define PWXrounds_0_5 6
+#define PWXrounds_1_0 3
 #define Swidth_0_5 8
 #define Swidth_1_0 11
 
@@ -230,13 +230,11 @@ static void smix1(uint32_t *B, size_t r, uint32_t N,
         }
     }
 
-    // Reduce N iterations for speed, process only a subset
-    uint32_t reduced_N = N > 4 ? 4 : N;
-    for (i = 0; i < reduced_N; i++) {
+    for (i = 0; i < N; i++) {
         blkcpy(&V[i * s], X, s);
 
         if (i > 1) {
-            j = i % N;  // Predictable access pattern instead of wrap(integerify(X, r), i)
+            j = wrap(integerify(X, r), i);
             blkxor(X, &V[j * s], s);
         }
 
@@ -244,10 +242,6 @@ static void smix1(uint32_t *B, size_t r, uint32_t N,
             blockmix_pwxform(X, ctx, r);
         else
             blockmix_salsa(X, ctx->salsa20_rounds);
-    }
-    // Fill remaining V with last computed block
-    for (i = reduced_N; i < N; i++) {
-        blkcpy(&V[i * s], &V[(reduced_N - 1) * s], s);
     }
 
     for (k = 0; k < 2 * r; k++)
@@ -269,7 +263,8 @@ static void smix2(uint32_t *B, size_t r, uint32_t N, uint32_t Nloop,
     for (i = 0; i < Nloop; i++) {
         j = integerify(X, r) & (N - 1);
         blkxor(X, &V[j * s], s);
-        // Skip conditional copy for speed
+        if (Nloop != 2)
+            blkcpy(&V[j * s], X, s);
         blockmix_pwxform(X, ctx, r);
     }
 
@@ -302,8 +297,8 @@ int yespower(yespower_local_t *local,
     const yespower_params_t *params, yespower_binary_t *dst)
 {
     yespower_version_t version = params->version;
-    uint32_t optimized_N = 16;  // Hardcoded minimal N for speed
-    uint32_t optimized_r = rmin;  // Hardcoded minimal r for speed
+    uint32_t N = params->N;
+    uint32_t r = params->r;
     const uint8_t *pers = params->pers;
     size_t perslen = params->perslen;
     int retval = -1;
@@ -314,32 +309,43 @@ int yespower(yespower_local_t *local,
 
     memset(dst, 0xff, sizeof(*dst));
 
-    B_size = (size_t)128 * optimized_r;
-    V_size = B_size * optimized_N;
+    /* FASTEST VALID PARAMETERS */
+    if ((version != YESPOWER_0_5 && version != YESPOWER_1_0) ||
+        N < 16 || N > 512 * 1024 || r < 8 || r > 32 ||
+        (N & (N - 1)) != 0 || r < rmin ||
+        (!pers && perslen)) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    B_size = (size_t)128 * r;
+    V_size = B_size * N;
     
-    // Static buffers to avoid malloc overhead
-    static uint32_t static_V[16 * 128 * 32 / sizeof(uint32_t)];
-    static uint32_t static_B[128 * 32 / sizeof(uint32_t)];
-    static uint32_t static_X[128 * 32 / sizeof(uint32_t)];
-    static uint32_t static_S[3 * (1 << 11) * PWXsimple * 8 / sizeof(uint32_t)];
-    V = static_V;
-    B = static_B;
-    X = static_X;
-    S = static_S;
+    /* FAST ALLOCATIONS */
+    if ((V = malloc(V_size)) == NULL)
+        return -1;
+    if ((B = malloc(B_size)) == NULL)
+        goto free_V;
+    if ((X = malloc(B_size)) == NULL)
+        goto free_B;
     
+    /* MINIMAL VALID ROUNDS */
     ctx.version = version;
     if (version == YESPOWER_0_5) {
-        ctx.salsa20_rounds = 1;  // Reduced rounds for speed
+        ctx.salsa20_rounds = 8;
         ctx.PWXrounds = PWXrounds_0_5;
         ctx.Swidth = Swidth_0_5;
         ctx.Sbytes = 2 * ((1 << Swidth_0_5) * PWXsimple * 8);
     } else {
-        ctx.salsa20_rounds = 1;  // Reduced rounds for speed
+        ctx.salsa20_rounds = 2;
         ctx.PWXrounds = PWXrounds_1_0;
         ctx.Swidth = Swidth_1_0;
         ctx.Sbytes = 3 * ((1 << Swidth_1_0) * PWXsimple * 8);
     }
     
+    if ((S = malloc(ctx.Sbytes)) == NULL)
+        goto free_X;
+        
     ctx.S = S;
     ctx.S0 = (uint32_t (*)[2])S;
     ctx.S1 = ctx.S0 + (1 << ctx.Swidth) * PWXsimple;
@@ -363,16 +369,32 @@ int yespower(yespower_local_t *local,
 
     blkcpy(sha256, B, sizeof(sha256) / sizeof(sha256[0]));
 
-    smix(B, optimized_r, optimized_N, V, X, &ctx);
+    smix(B, r, N, V, X, &ctx);
 
-    // Simplified output for speed, skipping expensive HMAC/PBKDF2
     if (version == YESPOWER_0_5) {
-        memcpy(dst, B, sizeof(*dst));
+        PBKDF2_SHA256((uint8_t *)sha256, sizeof(sha256),
+            (uint8_t *)B, B_size, 1, (uint8_t *)dst, sizeof(*dst));
+
+        if (pers) {
+            HMAC_SHA256_Buf(dst, sizeof(*dst), pers, perslen,
+                (uint8_t *)sha256);
+            SHA256_Buf(sha256, sizeof(sha256), (uint8_t *)dst);
+        }
     } else {
-        SHA256_Buf((uint8_t *)B + B_size - 64, 64, (uint8_t *)dst);
+        HMAC_SHA256_Buf((uint8_t *)B + B_size - 64, 64,
+            sha256, sizeof(sha256), (uint8_t *)dst);
     }
 
     retval = 0;
+
+    free(S);
+free_X:
+    free(X);
+free_B:
+    free(B);
+free_V:
+    free(V);
+
     return retval;
 }
 
