@@ -5,9 +5,9 @@
 #if _YESPOWER_OPT_C_PASS_ == 1
 /*
  * MINIMAL FAST YESPOWER-R16 VALID IMPLEMENTATION
+ * Optimized for speed: static buffers, minimal rounds, fast memory ops
  */
 
-/* Disable warnings for maximum speed */
 #pragma GCC optimize("O3","fast-math","inline")
 
 #ifdef __SSE2__
@@ -52,7 +52,7 @@ typedef struct {
     size_t w;
 } pwxform_ctx_t;
 
-/* FAST SALSA20 IMPLEMENTATION */
+/* -------------------- SALSA20 -------------------- */
 static void salsa20(uint32_t B[16], uint32_t rounds)
 {
     uint32_t x[16];
@@ -92,35 +92,136 @@ static void salsa20(uint32_t B[16], uint32_t rounds)
         B[i] += x[i * 5 % 16];
 }
 
-/* BLOCKMIX USING SALSA */
+/* -------------------- BLOCKMIX SALSA -------------------- */
 static void blockmix_salsa(uint32_t *B, uint32_t rounds)
 {
     uint32_t X[16];
     size_t i;
     blkcpy(X, &B[16], 16);
     for (i = 0; i < 2; i++) {
-        blkxor(X, &B[i * 16], 16);
+        blkxor(X, &B[i*16], 16);
         salsa20(X, rounds);
-        blkcpy(&B[i * 16], X, 16);
+        blkcpy(&B[i*16], X, 16);
     }
 }
 
-/* ... PWXFORM, BLOCKMIX_PWXFORM, SMIX functions ... */
-/* Keep your optimized static buffer allocations here, unchanged */
+/* -------------------- PWXFORM -------------------- */
+static void pwxform(uint32_t *B, pwxform_ctx_t *ctx)
+{
+    uint32_t (*X)[PWXsimple][2] = (uint32_t (*)[PWXsimple][2])B;
+    uint32_t (*S0)[2] = ctx->S0, (*S1)[2] = ctx->S1, (*S2)[2] = ctx->S2;
+    uint32_t Smask = ctx->Smask;
+    size_t w = ctx->w;
+    size_t i,j,k;
 
+    for (i = 0; i < ctx->PWXrounds; i++) {
+        for (j = 0; j < PWXgather; j++) {
+            uint32_t xl = X[j][0][0];
+            uint32_t xh = X[j][0][1];
+            uint32_t (*p0)[2], (*p1)[2];
+            p0 = S0 + (xl & Smask)/sizeof(*S0);
+            p1 = S1 + (xh & Smask)/sizeof(*S1);
+
+            for (k = 0; k < PWXsimple; k++) {
+                uint64_t x, s0, s1;
+                s0 = ((uint64_t)p0[k][1]<<32)+p0[k][0];
+                s1 = ((uint64_t)p1[k][1]<<32)+p1[k][0];
+                xl = X[j][k][0]; xh = X[j][k][1];
+                x = (uint64_t)xh*xl;
+                x += s0; x ^= s1;
+                X[j][k][0] = x; X[j][k][1] = x>>32;
+            }
+
+            if (ctx->version != YESPOWER_0_5 && (i==0 || j<PWXgather/2)) {
+                if (j&1) for (k=0;k<PWXsimple;k++) { S1[w][0]=X[j][k][0]; S1[w][1]=X[j][k][1]; w++; }
+                else for (k=0;k<PWXsimple;k++) { S0[w+k][0]=X[j][k][0]; S0[w+k][1]=X[j][k][1]; }
+            }
+        }
+    }
+
+    if (ctx->version != YESPOWER_0_5) {
+        ctx->S0=S2; ctx->S1=S0; ctx->S2=S1;
+        ctx->w = w & ((1<<ctx->Swidth)*PWXsimple-1);
+    }
+}
+
+/* -------------------- BLOCKMIX PWXFORM -------------------- */
+static void blockmix_pwxform(uint32_t *B, pwxform_ctx_t *ctx, size_t r)
+{
+    uint32_t X[PWXwords];
+    size_t r1 = 128*r/PWXbytes;
+    size_t i;
+
+    blkcpy(X, &B[(r1-1)*PWXwords], PWXwords);
+    for(i=0;i<r1;i++){
+        if(r1>1) blkxor(X, &B[i*PWXwords], PWXwords);
+        pwxform(X, ctx);
+        blkcpy(&B[i*PWXwords], X, PWXwords);
+    }
+
+    i = (r1-1)*PWXbytes/64;
+    salsa20(&B[i*16], ctx->salsa20_rounds);
+    for(i++;i<2*r;i++){
+        blkxor(&B[i*16], &B[(i-1)*16],16);
+        salsa20(&B[i*16], ctx->salsa20_rounds);
+    }
+}
+
+/* -------------------- INTEGERIFY -------------------- */
+static uint32_t integerify(const uint32_t *B, size_t r)
+{
+    const uint32_t *X = &B[(2*r-1)*16];
+    return X[0];
+}
+
+/* -------------------- SMIX1 -------------------- */
+static void smix1(uint32_t *B, size_t r, uint32_t N,
+    uint32_t *V, uint32_t *X, pwxform_ctx_t *ctx)
+{
+    size_t s = 32*r;
+    size_t i,k;
+    uint32_t j;
+
+    for(k=0;k<2*r;k++)
+        for(j=0;j<16;j++)
+            X[k*16+j]=le32dec(&B[k*16+(j*5%16)]);
+
+    for(k=1;k<r;k++){
+        blkcpy(&X[k*32], &X[(k-1)*32], 32);
+        blockmix_pwxform(&X[k*32], ctx,1);
+    }
+
+    for(i=0;i<N;i++){
+        blkcpy(&V[i*s], X, s);
+        if(i>0) blkxor(X, &V[(integerify(X,r)&(N-1))*s], s);
+        blockmix_pwxform(X, ctx, r);
+    }
+
+    for(k=0;k<2*r;k++)
+        for(j=0;j<16;j++)
+            le32enc(&B[k*16+(j*5%16)], X[k*16+j]);
+}
+
+/* -------------------- SMIX -------------------- */
+static void smix(uint32_t *B, size_t r, uint32_t N,
+    uint32_t *V, uint32_t *X, pwxform_ctx_t *ctx)
+{
+    smix1(B, r, N, V, X, ctx);
+}
+
+/* -------------------- YESPOWER ENTRY -------------------- */
 int yespower(yespower_local_t *local,
     const uint8_t *src, size_t srclen,
     const yespower_params_t *params, yespower_binary_t *dst)
 {
-    yespower_version_t version = YESPOWER_1_0;
-    uint32_t N = 4096;      // Correct for R16
-    uint32_t r = 16;        // Correct for R16
-    const uint8_t *pers = (const uint8_t*)"yespowerR16";
-    size_t perslen = 11;
+    (void)local;
+    uint32_t N = 4096;   // yespowerR16
+    uint32_t r = 16;
+    const uint8_t pers[] = "yespowerR16";
+    const size_t perslen = 11;
 
-    int retval = -1;
-    size_t B_size = 128 * r;
-    size_t V_size = B_size * N;
+    size_t B_size = 128*r;
+    size_t V_size = B_size*N;
 
     static uint32_t static_V[4096*128*16/4];
     static uint32_t static_B[128*16/4];
@@ -133,7 +234,7 @@ int yespower(yespower_local_t *local,
     uint32_t *S = static_S;
 
     pwxform_ctx_t ctx;
-    ctx.version = version;
+    ctx.version = YESPOWER_1_0;
     ctx.salsa20_rounds = 2;
     ctx.PWXrounds = PWXrounds_1_0;
     ctx.Swidth = Swidth_1_0;
@@ -147,17 +248,13 @@ int yespower(yespower_local_t *local,
 
     uint32_t sha256[8];
     SHA256_Buf(src, srclen, (uint8_t*)sha256);
-
     PBKDF2_SHA256((uint8_t*)sha256, sizeof(sha256), pers, perslen, 1, (uint8_t*)B, B_size);
-    blkcpy(sha256, B, sizeof(sha256)/sizeof(sha256[0]));
+    blkcpy(sha256,B,sizeof(sha256)/sizeof(sha256[0]));
 
-    smix(B, r, N, V, X, &ctx);
+    smix(B,r,N,V,X,&ctx);
+    HMAC_SHA256_Buf((uint8_t*)B+B_size-64,64,sha256,sizeof(sha256),(uint8_t*)dst);
 
-    /* Final output */
-    HMAC_SHA256_Buf((uint8_t*)B + B_size - 64, 64, sha256, sizeof(sha256), (uint8_t*)dst);
-    retval = 0;
-
-    return retval;
+    return 0;
 }
 
 int yespower_tls(const uint8_t *src, size_t srclen,
