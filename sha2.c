@@ -1,7 +1,6 @@
 /*
  * Copyright 2011 ArtForz
  * Copyright 2011-2013 pooler
- * Modifications for ultra-speed by Stansa AI, 2025
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
@@ -65,89 +64,7 @@ static inline uint32_t sig1(uint32_t x) {
     return rotr32(x, 17) ^ rotr32(x, 19) ^ (x >> 10);
 }
 
-/* --- Precomputed Message Schedule Storage (Exploit) --- */
-// Precompute message schedule to avoid redundant calculations for multiple nonces
-static uint32_t PRECOMPUTED_W[64][16]; // Store precomputed schedules for 16 nonce variations
-static int precomputed_initialized = 0;
-
-/* --- Initialize Precomputed Message Schedules --- */
-void init_precomputed_schedules(const uint32_t base_block[16]) {
-    uint32_t W[64];
-    for (int nonce_offset = 0; nonce_offset < 16; nonce_offset++) {
-        // Adjust nonce in block (assuming nonce is at index 4-7 for Bitcoin-like structure)
-        uint32_t modified_block[16];
-        memcpy(modified_block, base_block, sizeof(uint32_t) * 16);
-        modified_block[4] += nonce_offset; // Simple nonce variation for demo
-        
-        // Compute message schedule once
-        for (int i = 0; i < 16; i++) {
-            W[i] = modified_block[i];
-        }
-        for (int i = 16; i < 64; i++) {
-            W[i] = sig1(W[i-2]) + W[i-7] + sig0(W[i-15]) + W[i-16];
-        }
-        memcpy(PRECOMPUTED_W[nonce_offset], W, sizeof(uint32_t) * 64);
-    }
-    precomputed_initialized = 1;
-}
-
-/* --- Highly optimized compression for one 512-bit block with precomputation --- */
-static void sha256_compress_fast(uint32_t state[8], int nonce_offset) {
-    uint32_t S[8];
-    uint32_t t1, t2;
-    uint32_t *W = PRECOMPUTED_W[nonce_offset % 16]; // Reuse precomputed schedule
-
-    // Load state into local variables for faster access
-    uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
-    uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
-
-    // Fully unrolled main compression loop
-    #define ROUND(i, a, b, c, d, e, f, g, h) \
-        t1 = h + SIG1(e) + CH(e, f, g) + SHA256_K[i] + W[i]; \
-        t2 = SIG0(a) + MAJ(a, b, c); \
-        h = g; g = f; f = e; e = d + t1; d = c; c = b; b = a; a = t1 + t2;
-
-    ROUND(0, a, b, c, d, e, f, g, h); ROUND(1, a, b, c, d, e, f, g, h);
-    ROUND(2, a, b, c, d, e, f, g, h); ROUND(3, a, b, c, d, e, f, g, h);
-    ROUND(4, a, b, c, d, e, f, g, h); ROUND(5, a, b, c, d, e, f, g, h);
-    ROUND(6, a, b, c, d, e, f, g, h); ROUND(7, a, b, c, d, e, f, g, h);
-    ROUND(8, a, b, c, d, e, f, g, h); ROUND(9, a, b, c, d, e, f, g, h);
-    ROUND(10, a, b, c, d, e, f, g, h); ROUND(11, a, b, c, d, e, f, g, h);
-    ROUND(12, a, b, c, d, e, f, g, h); ROUND(13, a, b, c, d, e, f, g, h);
-    ROUND(14, a, b, c, d, e, f, g, h); ROUND(15, a, b, c, d, e, f, g, h);
-    ROUND(16, a, b, c, d, e, f, g, h); ROUND(17, a, b, c, d, e, f, g, h);
-    ROUND(18, a, b, c, d, e, f, g, h); ROUND(19, a, b, c, d, e, f, g, h);
-    ROUND(20, a, b, c, d, e, f, g, h); ROUND(21, a, b, c, d, e, f, g, h);
-    ROUND(22, a, b, c, d, e, f, g, h); ROUND(23, a, b, c, d, e, f, g, h);
-    ROUND(24, a, b, c, d, e, f, g, h); ROUND(25, a, b, c, d, e, f, g, h);
-    ROUND(26, a, b, c, d, e, f, g, h); ROUND(27, a, b, c, d, e, f, g, h);
-    ROUND(28, a, b, c, d, e, f, g, h); ROUND(29, a, b, c, d, e, f, g, h);
-    ROUND(30, a, b, c, d, e, f, g, h); ROUND(31, a, b, c, d, e, f, g, h);
-    ROUND(32, a, b, c, d, e, f, g, h); ROUND(33, a, b, c, d, e, f, g, h);
-    ROUND(34, a, b, c, d, e, f, g, h); ROUND(35, a, b, c, d, e, f, g, h);
-    ROUND(36, a, b, c, d, e, f, g, h); ROUND(37, a, b, c, d, e, f, g, h);
-    ROUND(38, a, b, c, d, e, f, g, h); ROUND(39, a, b, c, d, e, f, g, h);
-    ROUND(40, a, b, c, d, e, f, g, h); ROUND(41, a, b, c, d, e, f, g, h);
-    ROUND(42, a, b, c, d, e, f, g, h); ROUND(43, a, b, c, d, e, f, g, h);
-    ROUND(44, a, b, c, d, e, f, g, h); ROUND(45, a, b, c, d, e, f, g, h);
-    ROUND(46, a, b, c, d, e, f, g, h); ROUND(47, a, b, c, d, e, f, g, h);
-    ROUND(48, a, b, c, d, e, f, g, h); ROUND(49, a, b, c, d, e, f, g, h);
-    ROUND(50, a, b, c, d, e, f, g, h); ROUND(51, a, b, c, d, e, f, g, h);
-    ROUND(52, a, b, c, d, e, f, g, h); ROUND(53, a, b, c, d, e, f, g, h);
-    ROUND(54, a, b, c, d, e, f, g, h); ROUND(55, a, b, c, d, e, f, g, h);
-    ROUND(56, a, b, c, d, e, f, g, h); ROUND(57, a, b, c, d, e, f, g, h);
-    ROUND(58, a, b, c, d, e, f, g, h); ROUND(59, a, b, c, d, e, f, g, h);
-    ROUND(60, a, b, c, d, e, f, g, h); ROUND(61, a, b, c, d, e, f, g, h);
-    ROUND(62, a, b, c, d, e, f, g, h); ROUND(63, a, b, c, d, e, f, g, h);
-
-    #undef ROUND
-
-    // Update state
-    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
-    state[4] += e; state[5] += f; state[6] += g; state[7] += h;
-}
-
-/* --- Original compression function for fallback --- */
+/* --- Highly optimized compression for one 512-bit block --- */
 static void sha256_compress(uint32_t state[8], const uint32_t M[16]) {
     uint32_t W[64];
     uint32_t S[8];
@@ -275,38 +192,6 @@ void sha256_transform(uint32_t state[8], const uint32_t block[16], int swap) {
     sha256_compress(state, M);
 }
 
-/* --- Ultra-Fast Hash Generation for Mining (Exploit) --- */
-void sha256_fast_batch(const unsigned char *data, size_t len, unsigned char output_batch[16][32], uint32_t start_nonce, uint32_t iterations) {
-    if (!precomputed_initialized) {
-        uint32_t base_block[16];
-        for (int i = 0; i < 16; i++) {
-            base_block[i] = (uint32_t)data[4*i] << 24 | (uint32_t)data[4*i+1] << 16 |
-                            (uint32_t)data[4*i+2] << 8 | (uint32_t)data[4*i+3];
-        }
-        init_precomputed_schedules(base_block);
-    }
-
-    for (uint32_t i = 0; i < iterations && i < 16; i++) {
-        uint32_t state[8];
-        sha256_init(state);
-        // Use precomputed message schedule for current nonce offset
-        sha256_compress_fast(state, start_nonce + i);
-
-        // Output hash directly
-        for (int j = 0; j < 8; j++) {
-            uint32_t val = state[j];
-            output_batch[i][4*j] = (unsigned char)(val >> 24);
-            output_batch[i][4*j+1] = (unsigned char)(val >> 16);
-            output_batch[i][4*j+2] = (unsigned char)(val >> 8);
-            output_batch[i][4*j+3] = (unsigned char)val;
-        }
-    }
-    // Note: For even faster processing, consider SIMD or multi-threading here
-    // e.g., use OpenMP or SSE/AVX instructions to parallelize compression across nonces
-    // #pragma omp parallel for
-    // for (int i = 0; i < iterations; i++) { ... }
-}
-
 /* --- Optimized One-shot SHA-256 --- */
 void sha256(const unsigned char *data, size_t len, unsigned char out32[32]) {
     uint32_t state[8];
@@ -319,6 +204,7 @@ void sha256(const unsigned char *data, size_t len, unsigned char out32[32]) {
     /* Process full blocks efficiently */
     while (left >= 64) {
         uint32_t M[16];
+        // Use direct memory operations to avoid function call overhead
         for (int i = 0; i < 16; i++) {
             M[i] = (uint32_t)ptr[4*i] << 24 | (uint32_t)ptr[4*i+1] << 16 | 
                    (uint32_t)ptr[4*i+2] << 8 | (uint32_t)ptr[4*i+3];
