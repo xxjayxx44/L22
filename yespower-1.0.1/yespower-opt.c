@@ -1,3 +1,42 @@
+/*-
+ * Copyright 2009 Colin Percival
+ * Copyright 2012-2019 Alexander Peslyak
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ * This file was originally written by Colin Percival as part of the Tarsnap
+ * online backup system.
+ *
+ * This is a proof-of-work focused fork of yescrypt, including optimized and
+ * cut-down implementation of the obsolete yescrypt 0.5 (based off its first
+ * submission to PHC back in 2014) and a new proof-of-work specific variation
+ * known as yespower 1.0.  The former is intended as an upgrade for
+ * cryptocurrencies that already use yescrypt 0.5 and the latter may be used
+ * as a further upgrade (hard fork) by those and other cryptocurrencies.  The
+ * version of algorithm to use is requested through parameters, allowing for
+ * both algorithms to co-exist in client and miner implementations (such as in
+ * preparation for a hard-fork).
+ */
 
 #ifndef _YESPOWER_OPT_C_PASS_
 #define _YESPOWER_OPT_C_PASS_ 1
@@ -777,4 +816,339 @@ static uint32_t blockmix_xor_save(salsa20_blk_t *restrict Bin1out,
 
 #if _YESPOWER_OPT_C_PASS_ > 1
 	ctx->S0 = S0; ctx->S1 = S1; ctx->S2 = S2;
-	ctx->w
+	ctx->w = w;
+#endif
+
+	SALSA20(Bin1out[i])
+
+	return INTEGERIFY;
+}
+
+#if _YESPOWER_OPT_C_PASS_ == 1
+/**
+ * integerify(B, r):
+ * Return the result of parsing B_{2r-1} as a little-endian integer.
+ */
+static inline uint32_t integerify(const salsa20_blk_t *B, size_t r)
+{
+/*
+ * Our 64-bit words are in host byte order, which is why we don't just read
+ * w[0] here (would be wrong on big-endian).  Also, our 32-bit words are
+ * SIMD-shuffled, but we only care about the least significant 32 bits anyway.
+ */
+	return (uint32_t)B[2 * r - 1].d[0];
+}
+#endif
+
+/**
+ * smix1(B, r, N, V, XY, S):
+ * Compute first loop of B = SMix_r(B, N).  The input B must be 128r bytes in
+ * length; the temporary storage V must be 128rN bytes in length; the temporary
+ * storage XY must be 128r+64 bytes in length.  N must be even and at least 4.
+ * The array V must be aligned to a multiple of 64 bytes, and arrays B and XY
+ * to a multiple of at least 16 bytes.
+ */
+static void smix1(uint8_t *B, size_t r, uint32_t N,
+    salsa20_blk_t *V, salsa20_blk_t *XY, pwxform_ctx_t *ctx)
+{
+	size_t s = 2 * r;
+	salsa20_blk_t *X = V, *Y = &V[s], *V_j;
+	uint32_t i, j, n;
+
+#if _YESPOWER_OPT_C_PASS_ == 1
+	for (i = 0; i < 2 * r; i++) {
+#else
+	for (i = 0; i < 2; i++) {
+#endif
+		const salsa20_blk_t *src = (salsa20_blk_t *)&B[i * 64];
+		salsa20_blk_t *tmp = Y;
+		salsa20_blk_t *dst = &X[i];
+		size_t k;
+		for (k = 0; k < 16; k++)
+			tmp->w[k] = le32dec(&src->w[k]);
+		salsa20_simd_shuffle(tmp, dst);
+	}
+
+#if _YESPOWER_OPT_C_PASS_ > 1
+	for (i = 1; i < r; i++)
+		blockmix(&X[(i - 1) * 2], &X[i * 2], 1, ctx);
+#endif
+
+	blockmix(X, Y, r, ctx);
+	X = Y + s;
+	blockmix(Y, X, r, ctx);
+	j = integerify(X, r);
+
+	for (n = 2; n < N; n <<= 1) {
+		uint32_t m = (n < N / 2) ? n : (N - 1 - n);
+		for (i = 1; i < m; i += 2) {
+			Y = X + s;
+			j &= n - 1;
+			j += i - 1;
+			V_j = &V[j * s];
+			j = blockmix_xor(X, V_j, Y, r, ctx);
+			j &= n - 1;
+			j += i;
+			V_j = &V[j * s];
+			X = Y + s;
+			j = blockmix_xor(Y, V_j, X, r, ctx);
+		}
+	}
+	n >>= 1;
+
+	j &= n - 1;
+	j += N - 2 - n;
+	V_j = &V[j * s];
+	Y = X + s;
+	j = blockmix_xor(X, V_j, Y, r, ctx);
+	j &= n - 1;
+	j += N - 1 - n;
+	V_j = &V[j * s];
+	blockmix_xor(Y, V_j, XY, r, ctx);
+
+	for (i = 0; i < 2 * r; i++) {
+		const salsa20_blk_t *src = &XY[i];
+		salsa20_blk_t *tmp = &XY[s];
+		salsa20_blk_t *dst = (salsa20_blk_t *)&B[i * 64];
+		size_t k;
+		for (k = 0; k < 16; k++)
+			le32enc(&tmp->w[k], src->w[k]);
+		salsa20_simd_unshuffle(tmp, dst);
+	}
+}
+
+/**
+ * smix2(B, r, N, Nloop, V, XY, S):
+ * Compute second loop of B = SMix_r(B, N).  The input B must be 128r bytes in
+ * length; the temporary storage V must be 128rN bytes in length; the temporary
+ * storage XY must be 256r bytes in length.  N must be a power of 2 and at
+ * least 2.  Nloop must be even.  The array V must be aligned to a multiple of
+ * 64 bytes, and arrays B and XY to a multiple of at least 16 bytes.
+ */
+static void smix2(uint8_t *B, size_t r, uint32_t N, uint32_t Nloop,
+    salsa20_blk_t *V, salsa20_blk_t *XY, pwxform_ctx_t *ctx)
+{
+	size_t s = 2 * r;
+	salsa20_blk_t *X = XY, *Y = &XY[s];
+	uint32_t i, j;
+
+	for (i = 0; i < 2 * r; i++) {
+		const salsa20_blk_t *src = (salsa20_blk_t *)&B[i * 64];
+		salsa20_blk_t *tmp = Y;
+		salsa20_blk_t *dst = &X[i];
+		size_t k;
+		for (k = 0; k < 16; k++)
+			tmp->w[k] = le32dec(&src->w[k]);
+		salsa20_simd_shuffle(tmp, dst);
+	}
+
+	j = integerify(X, r) & (N - 1);
+
+#if _YESPOWER_OPT_C_PASS_ == 1
+	if (Nloop > 2) {
+#endif
+		do {
+			salsa20_blk_t *V_j = &V[j * s];
+			j = blockmix_xor_save(X, V_j, r, ctx) & (N - 1);
+			V_j = &V[j * s];
+			j = blockmix_xor_save(X, V_j, r, ctx) & (N - 1);
+		} while (Nloop -= 2);
+#if _YESPOWER_OPT_C_PASS_ == 1
+	} else {
+		const salsa20_blk_t * V_j = &V[j * s];
+		j = blockmix_xor(X, V_j, Y, r, ctx) & (N - 1);
+		V_j = &V[j * s];
+		blockmix_xor(Y, V_j, X, r, ctx);
+	}
+#endif
+
+	for (i = 0; i < 2 * r; i++) {
+		const salsa20_blk_t *src = &X[i];
+		salsa20_blk_t *tmp = Y;
+		salsa20_blk_t *dst = (salsa20_blk_t *)&B[i * 64];
+		size_t k;
+		for (k = 0; k < 16; k++)
+			le32enc(&tmp->w[k], src->w[k]);
+		salsa20_simd_unshuffle(tmp, dst);
+	}
+}
+
+/**
+ * smix(B, r, N, V, XY, S):
+ * Compute B = SMix_r(B, N).  The input B must be 128rp bytes in length; the
+ * temporary storage V must be 128rN bytes in length; the temporary storage
+ * XY must be 256r bytes in length.  N must be a power of 2 and at least 16.
+ * The array V must be aligned to a multiple of 64 bytes, and arrays B and XY
+ * to a multiple of at least 16 bytes (aligning them to 64 bytes as well saves
+ * cache lines, but it might also result in cache bank conflicts).
+ */
+static void smix(uint8_t *B, size_t r, uint32_t N,
+    salsa20_blk_t *V, salsa20_blk_t *XY, pwxform_ctx_t *ctx)
+{
+#if _YESPOWER_OPT_C_PASS_ == 1
+	uint32_t Nloop_all = (N + 2) / 3; /* 1/3, round up */
+	uint32_t Nloop_rw = Nloop_all;
+
+	Nloop_all++; Nloop_all &= ~(uint32_t)1; /* round up to even */
+	Nloop_rw &= ~(uint32_t)1; /* round down to even */
+#else
+	uint32_t Nloop_rw = (N + 2) / 3; /* 1/3, round up */
+	Nloop_rw++; Nloop_rw &= ~(uint32_t)1; /* round up to even */
+#endif
+
+	smix1(B, 1, ctx->Sbytes / 128, (salsa20_blk_t *)ctx->S0, XY, NULL);
+	smix1(B, r, N, V, XY, ctx);
+	smix2(B, r, N, Nloop_rw /* must be > 2 */, V, XY, ctx);
+#if _YESPOWER_OPT_C_PASS_ == 1
+	if (Nloop_all > Nloop_rw)
+		smix2(B, r, N, 2, V, XY, ctx);
+#endif
+}
+
+#if _YESPOWER_OPT_C_PASS_ == 1
+#undef _YESPOWER_OPT_C_PASS_
+#define _YESPOWER_OPT_C_PASS_ 2
+#define blockmix_salsa blockmix_salsa_1_0
+#define blockmix_salsa_xor blockmix_salsa_xor_1_0
+#define blockmix blockmix_1_0
+#define blockmix_xor blockmix_xor_1_0
+#define blockmix_xor_save blockmix_xor_save_1_0
+#define smix1 smix1_1_0
+#define smix2 smix2_1_0
+#define smix smix_1_0
+#include "yespower-opt.c"
+#undef smix
+
+/**
+ * yespower(local, src, srclen, params, dst):
+ * Compute yespower(src[0 .. srclen - 1], N, r), to be checked for "< target".
+ * local is the thread-local data structure, allowing to preserve and reuse a
+ * memory allocation across calls, thereby reducing its overhead.
+ *
+ * Return 0 on success; or -1 on error.
+ */
+int yespower(yespower_local_t *local,
+    const uint8_t *src, size_t srclen,
+    const yespower_params_t *params,
+    yespower_binary_t *dst)
+{
+	yespower_version_t version = params->version;
+	uint32_t N = params->N;
+	uint32_t r = params->r;
+	const uint8_t *pers = params->pers;
+	size_t perslen = params->perslen;
+	uint32_t Swidth;
+	size_t B_size, V_size, XY_size, need;
+	uint8_t *B, *S;
+	salsa20_blk_t *V, *XY;
+	pwxform_ctx_t ctx;
+	uint8_t sha256[32];
+
+	/* Sanity-check parameters */
+	if ((version != YESPOWER_0_5 && version != YESPOWER_1_0) ||
+	    N < 1024 || N > 512 * 1024 || r < 8 || r > 32 ||
+	    (N & (N - 1)) != 0 ||
+	    (!pers && perslen)) {
+		errno = EINVAL;
+		goto fail;
+	}
+
+	/* Allocate memory */
+	B_size = (size_t)128 * r;
+	V_size = B_size * N;
+	if (version == YESPOWER_0_5) {
+		XY_size = B_size * 2;
+		Swidth = Swidth_0_5;
+		ctx.Sbytes = 2 * Swidth_to_Sbytes1(Swidth);
+	} else {
+		XY_size = B_size + 64;
+		Swidth = Swidth_1_0;
+		ctx.Sbytes = 3 * Swidth_to_Sbytes1(Swidth);
+	}
+	need = B_size + V_size + XY_size + ctx.Sbytes;
+	if (local->aligned_size < need) {
+		if (free_region(local))
+			goto fail;
+		if (!alloc_region(local, need))
+			goto fail;
+	}
+	B = (uint8_t *)local->aligned;
+	V = (salsa20_blk_t *)((uint8_t *)B + B_size);
+	XY = (salsa20_blk_t *)((uint8_t *)V + V_size);
+	S = (uint8_t *)XY + XY_size;
+	ctx.S0 = S;
+	ctx.S1 = S + Swidth_to_Sbytes1(Swidth);
+
+	SHA256_Buf(src, srclen, sha256);
+
+	if (version == YESPOWER_0_5) {
+		PBKDF2_SHA256(sha256, sizeof(sha256), src, srclen, 1,
+		    B, B_size);
+		memcpy(sha256, B, sizeof(sha256));
+		smix(B, r, N, V, XY, &ctx);
+		PBKDF2_SHA256(sha256, sizeof(sha256), B, B_size, 1,
+		    (uint8_t *)dst, sizeof(*dst));
+
+		if (pers) {
+			HMAC_SHA256_Buf(dst, sizeof(*dst), pers, perslen,
+			    sha256);
+			SHA256_Buf(sha256, sizeof(sha256), (uint8_t *)dst);
+		}
+	} else {
+		ctx.S2 = S + 2 * Swidth_to_Sbytes1(Swidth);
+		ctx.w = 0;
+
+		if (pers) {
+			src = pers;
+			srclen = perslen;
+		} else {
+			srclen = 0;
+		}
+
+		PBKDF2_SHA256(sha256, sizeof(sha256), src, srclen, 1, B, 128);
+		memcpy(sha256, B, sizeof(sha256));
+		smix_1_0(B, r, N, V, XY, &ctx);
+		HMAC_SHA256_Buf(B + B_size - 64, 64,
+		    sha256, sizeof(sha256), (uint8_t *)dst);
+	}
+
+	/* Success! */
+	return 0;
+
+fail:
+	memset(dst, 0xff, sizeof(*dst));
+	return -1;
+}
+
+/**
+ * yespower_tls(src, srclen, params, dst):
+ * Compute yespower(src[0 .. srclen - 1], N, r), to be checked for "< target".
+ * The memory allocation is maintained internally using thread-local storage.
+ *
+ * Return 0 on success; or -1 on error.
+ */
+int yespower_tls(const uint8_t *src, size_t srclen,
+    const yespower_params_t *params, yespower_binary_t *dst)
+{
+	static __thread int initialized = 0;
+	static __thread yespower_local_t local;
+
+	if (!initialized) {
+		init_region(&local);
+		initialized = 1;
+	}
+
+	return yespower(&local, src, srclen, params, dst);
+}
+
+int yespower_init_local(yespower_local_t *local)
+{
+	init_region(local);
+	return 0;
+}
+
+int yespower_free_local(yespower_local_t *local)
+{
+	return free_region(local);
+}
+#endif
