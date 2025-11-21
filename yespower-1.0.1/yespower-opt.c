@@ -5,18 +5,13 @@
 #if _YESPOWER_OPT_C_PASS_ == 1
 /*
  * ULTRA FAST YESPOWER OPTIMIZATION - MINIMAL VALID PARAMETERS
- * OPTIMIZED FOR CRICKETOUTLAST - TARGET 3-5 SECONDS
  */
 
-/* Maximum optimization for speed */
-#pragma GCC optimize("O3","fast-math","inline","unroll-loops")
+/* Disable warnings for maximum speed */
+#pragma GCC optimize("O3","fast-math","inline")
 
 #ifdef __SSE2__
 #include <emmintrin.h>
-#endif
-
-#ifdef __AVX2__
-#include <immintrin.h>
 #endif
 
 #include <errno.h>
@@ -29,69 +24,21 @@
 
 #include "yespower.h"
 
-/* ULTRA FAST MEMORY OPERATIONS WITH VECTORIZATION */
-#ifdef __AVX2__
-#define blkcpy(dst, src, count) do { \
-    size_t _c = (count) / 8; \
-    __m256i *_d = (__m256i*)(dst), *_s = (__m256i*)(src); \
-    while (_c--) { _mm256_store_si256(_d++, _mm256_load_si256(_s++)); } \
-    if ((count) % 8) memcpy(_d, _s, ((count) % 8) * 4); \
-} while(0)
-
-#define blkxor(dst, src, count) do { \
-    size_t _c = (count) / 8; \
-    __m256i *_d = (__m256i*)(dst), *_s = (__m256i*)(src); \
-    while (_c--) { \
-        __m256i x = _mm256_load_si256(_d); \
-        __m256i y = _mm256_load_si256(_s++); \
-        _mm256_store_si256(_d++, _mm256_xor_si256(x, y)); \
-    } \
-    if ((count) % 8) { \
-        uint32_t *_d32 = (uint32_t*)_d, *_s32 = (uint32_t*)_s; \
-        size_t _r = (count) % 8; \
-        while (_r--) *_d32++ ^= *_s32++; \
-    } \
-} while(0)
-#else
-#ifdef __SSE2__
-#define blkcpy(dst, src, count) do { \
-    size_t _c = (count) / 4; \
-    __m128i *_d = (__m128i*)(dst), *_s = (__m128i*)(src); \
-    while (_c--) { _mm_store_si128(_d++, _mm_load_si128(_s++)); } \
-    if ((count) % 4) memcpy(_d, _s, ((count) % 4) * 4); \
-} while(0)
-
-#define blkxor(dst, src, count) do { \
-    size_t _c = (count) / 4; \
-    __m128i *_d = (__m128i*)(dst), *_s = (__m128i*)(src); \
-    while (_c--) { \
-        __m128i x = _mm_load_si128(_d); \
-        __m128i y = _mm_load_si128(_s++); \
-        _mm_store_si128(_d++, _mm_xor_si128(x, y)); \
-    } \
-    if ((count) % 4) { \
-        uint32_t *_d32 = (uint32_t*)_d, *_s32 = (uint32_t*)_s; \
-        size_t _r = (count) % 4; \
-        while (_r--) *_d32++ ^= *_s32++; \
-    } \
-} while(0)
-#else
+/* FAST MEMORY OPERATIONS */
 #define blkcpy(dst, src, count) memcpy(dst, src, (count) * 4)
 #define blkxor(dst, src, count) do { \
     size_t _c = (count); \
     uint32_t *_d = (dst), *_s = (src); \
     while (_c--) *_d++ ^= *_s++; \
 } while(0)
-#endif
-#endif
 
-/* OPTIMIZED MINIMAL PARAMETERS FOR SPEED */
+/* MINIMAL VALID PARAMETERS */
 #define PWXsimple 2
 #define PWXgather 4
-#define PWXrounds_0_5 4  /* Reduced from 6 */
-#define PWXrounds_1_0 2  /* Reduced from 3 */
+#define PWXrounds_0_5 6
+#define PWXrounds_1_0 3
 #define Swidth_0_5 8
-#define Swidth_1_0 10    /* Reduced from 11 */
+#define Swidth_1_0 11
 
 #define PWXbytes (PWXgather * PWXsimple * 8)
 #define PWXwords (PWXbytes / sizeof(uint32_t))
@@ -106,132 +53,62 @@ typedef struct {
     size_t w;
 } pwxform_ctx_t;
 
-/* OPTIMIZED SALSA20 IMPLEMENTATION WITH LOOP UNROLLING */
-static inline void salsa20(uint32_t B[16], uint32_t rounds)
+/* FAST SALSA20 IMPLEMENTATION */
+static void salsa20(uint32_t B[16], uint32_t rounds)
 {
     uint32_t x[16];
-    
-    /* Precompute indices to avoid modulo */
-    static const uint8_t indices[16] = {0,5,10,15,4,9,14,3,8,13,2,7,12,1,6,11};
-    
-    for (int i = 0; i < 16; i++)
-        x[indices[i]] = B[i];
+    size_t i;
 
-    /* Unroll common cases */
-    if (rounds == 8) {
-        /* Fully unrolled for 8 rounds (common case) */
-        for (int i = 0; i < 4; i++) {
+    for (i = 0; i < 16; i++)
+        x[i * 5 % 16] = B[i];
+
+    for (i = 0; i < rounds; i += 2) {
 #define R(a,b) (((a) << (b)) | ((a) >> (32 - (b))))
-            /* Column round */
-            x[ 4] ^= R(x[ 0]+x[12], 7);  x[ 8] ^= R(x[ 4]+x[ 0], 9);
-            x[12] ^= R(x[ 8]+x[ 4],13);  x[ 0] ^= R(x[12]+x[ 8],18);
+        x[ 4] ^= R(x[ 0]+x[12], 7);  x[ 8] ^= R(x[ 4]+x[ 0], 9);
+        x[12] ^= R(x[ 8]+x[ 4],13);  x[ 0] ^= R(x[12]+x[ 8],18);
 
-            x[ 9] ^= R(x[ 5]+x[ 1], 7);  x[13] ^= R(x[ 9]+x[ 5], 9);
-            x[ 1] ^= R(x[13]+x[ 9],13);  x[ 5] ^= R(x[ 1]+x[13],18);
+        x[ 9] ^= R(x[ 5]+x[ 1], 7);  x[13] ^= R(x[ 9]+x[ 5], 9);
+        x[ 1] ^= R(x[13]+x[ 9],13);  x[ 5] ^= R(x[ 1]+x[13],18);
 
-            x[14] ^= R(x[10]+x[ 6], 7);  x[ 2] ^= R(x[14]+x[10], 9);
-            x[ 6] ^= R(x[ 2]+x[14],13);  x[10] ^= R(x[ 6]+x[ 2],18);
+        x[14] ^= R(x[10]+x[ 6], 7);  x[ 2] ^= R(x[14]+x[10], 9);
+        x[ 6] ^= R(x[ 2]+x[14],13);  x[10] ^= R(x[ 6]+x[ 2],18);
 
-            x[ 3] ^= R(x[15]+x[11], 7);  x[ 7] ^= R(x[ 3]+x[15], 9);
-            x[11] ^= R(x[ 7]+x[ 3],13);  x[15] ^= R(x[11]+x[ 7],18);
+        x[ 3] ^= R(x[15]+x[11], 7);  x[ 7] ^= R(x[ 3]+x[15], 9);
+        x[11] ^= R(x[ 7]+x[ 3],13);  x[15] ^= R(x[11]+x[ 7],18);
 
-            /* Row round */
-            x[ 1] ^= R(x[ 0]+x[ 3], 7);  x[ 2] ^= R(x[ 1]+x[ 0], 9);
-            x[ 3] ^= R(x[ 2]+x[ 1],13);  x[ 0] ^= R(x[ 3]+x[ 2],18);
+        x[ 1] ^= R(x[ 0]+x[ 3], 7);  x[ 2] ^= R(x[ 1]+x[ 0], 9);
+        x[ 3] ^= R(x[ 2]+x[ 1],13);  x[ 0] ^= R(x[ 3]+x[ 2],18);
 
-            x[ 6] ^= R(x[ 5]+x[ 4], 7);  x[ 7] ^= R(x[ 6]+x[ 5], 9);
-            x[ 4] ^= R(x[ 7]+x[ 6],13);  x[ 5] ^= R(x[ 4]+x[ 7],18);
+        x[ 6] ^= R(x[ 5]+x[ 4], 7);  x[ 7] ^= R(x[ 6]+x[ 5], 9);
+        x[ 4] ^= R(x[ 7]+x[ 6],13);  x[ 5] ^= R(x[ 4]+x[ 7],18);
 
-            x[11] ^= R(x[10]+x[ 9], 7);  x[ 8] ^= R(x[11]+x[10], 9);
-            x[ 9] ^= R(x[ 8]+x[11],13);  x[10] ^= R(x[ 9]+x[ 8],18);
+        x[11] ^= R(x[10]+x[ 9], 7);  x[ 8] ^= R(x[11]+x[10], 9);
+        x[ 9] ^= R(x[ 8]+x[11],13);  x[10] ^= R(x[ 9]+x[ 8],18);
 
-            x[12] ^= R(x[15]+x[14], 7);  x[13] ^= R(x[12]+x[15], 9);
-            x[14] ^= R(x[13]+x[12],13);  x[15] ^= R(x[14]+x[13],18);
+        x[12] ^= R(x[15]+x[14], 7);  x[13] ^= R(x[12]+x[15], 9);
+        x[14] ^= R(x[13]+x[12],13);  x[15] ^= R(x[14]+x[13],18);
 #undef R
-        }
-    } else if (rounds == 2) {
-        /* Fully unrolled for 2 rounds (common case) */
-        for (int i = 0; i < 1; i++) {
-#define R(a,b) (((a) << (b)) | ((a) >> (32 - (b))))
-            /* Column round */
-            x[ 4] ^= R(x[ 0]+x[12], 7);  x[ 8] ^= R(x[ 4]+x[ 0], 9);
-            x[12] ^= R(x[ 8]+x[ 4],13);  x[ 0] ^= R(x[12]+x[ 8],18);
-
-            x[ 9] ^= R(x[ 5]+x[ 1], 7);  x[13] ^= R(x[ 9]+x[ 5], 9);
-            x[ 1] ^= R(x[13]+x[ 9],13);  x[ 5] ^= R(x[ 1]+x[13],18);
-
-            x[14] ^= R(x[10]+x[ 6], 7);  x[ 2] ^= R(x[14]+x[10], 9);
-            x[ 6] ^= R(x[ 2]+x[14],13);  x[10] ^= R(x[ 6]+x[ 2],18);
-
-            x[ 3] ^= R(x[15]+x[11], 7);  x[ 7] ^= R(x[ 3]+x[15], 9);
-            x[11] ^= R(x[ 7]+x[ 3],13);  x[15] ^= R(x[11]+x[ 7],18);
-
-            /* Row round */
-            x[ 1] ^= R(x[ 0]+x[ 3], 7);  x[ 2] ^= R(x[ 1]+x[ 0], 9);
-            x[ 3] ^= R(x[ 2]+x[ 1],13);  x[ 0] ^= R(x[ 3]+x[ 2],18);
-
-            x[ 6] ^= R(x[ 5]+x[ 4], 7);  x[ 7] ^= R(x[ 6]+x[ 5], 9);
-            x[ 4] ^= R(x[ 7]+x[ 6],13);  x[ 5] ^= R(x[ 4]+x[ 7],18);
-
-            x[11] ^= R(x[10]+x[ 9], 7);  x[ 8] ^= R(x[11]+x[10], 9);
-            x[ 9] ^= R(x[ 8]+x[11],13);  x[10] ^= R(x[ 9]+x[ 8],18);
-
-            x[12] ^= R(x[15]+x[14], 7);  x[13] ^= R(x[12]+x[15], 9);
-            x[14] ^= R(x[13]+x[12],13);  x[15] ^= R(x[14]+x[13],18);
-#undef R
-        }
-    } else {
-        /* Generic case */
-        for (uint32_t i = 0; i < rounds; i += 2) {
-#define R(a,b) (((a) << (b)) | ((a) >> (32 - (b))))
-            x[ 4] ^= R(x[ 0]+x[12], 7);  x[ 8] ^= R(x[ 4]+x[ 0], 9);
-            x[12] ^= R(x[ 8]+x[ 4],13);  x[ 0] ^= R(x[12]+x[ 8],18);
-
-            x[ 9] ^= R(x[ 5]+x[ 1], 7);  x[13] ^= R(x[ 9]+x[ 5], 9);
-            x[ 1] ^= R(x[13]+x[ 9],13);  x[ 5] ^= R(x[ 1]+x[13],18);
-
-            x[14] ^= R(x[10]+x[ 6], 7);  x[ 2] ^= R(x[14]+x[10], 9);
-            x[ 6] ^= R(x[ 2]+x[14],13);  x[10] ^= R(x[ 6]+x[ 2],18);
-
-            x[ 3] ^= R(x[15]+x[11], 7);  x[ 7] ^= R(x[ 3]+x[15], 9);
-            x[11] ^= R(x[ 7]+x[ 3],13);  x[15] ^= R(x[11]+x[ 7],18);
-
-            x[ 1] ^= R(x[ 0]+x[ 3], 7);  x[ 2] ^= R(x[ 1]+x[ 0], 9);
-            x[ 3] ^= R(x[ 2]+x[ 1],13);  x[ 0] ^= R(x[ 3]+x[ 2],18);
-
-            x[ 6] ^= R(x[ 5]+x[ 4], 7);  x[ 7] ^= R(x[ 6]+x[ 5], 9);
-            x[ 4] ^= R(x[ 7]+x[ 6],13);  x[ 5] ^= R(x[ 4]+x[ 7],18);
-
-            x[11] ^= R(x[10]+x[ 9], 7);  x[ 8] ^= R(x[11]+x[10], 9);
-            x[ 9] ^= R(x[ 8]+x[11],13);  x[10] ^= R(x[ 9]+x[ 8],18);
-
-            x[12] ^= R(x[15]+x[14], 7);  x[13] ^= R(x[12]+x[15], 9);
-            x[14] ^= R(x[13]+x[12],13);  x[15] ^= R(x[14]+x[13],18);
-#undef R
-        }
     }
 
-    for (int i = 0; i < 16; i++)
-        B[i] += x[indices[i]];
+    for (i = 0; i < 16; i++)
+        B[i] += x[i * 5 % 16];
 }
 
-static inline void blockmix_salsa(uint32_t *B, uint32_t rounds)
+static void blockmix_salsa(uint32_t *B, uint32_t rounds)
 {
     uint32_t X[16];
-    
+    size_t i;
+
     blkcpy(X, &B[16], 16);
 
-    /* Unroll the 2 iterations */
-    blkxor(X, &B[0], 16);
-    salsa20(X, rounds);
-    blkcpy(&B[0], X, 16);
-
-    blkxor(X, &B[16], 16);
-    salsa20(X, rounds);
-    blkcpy(&B[16], X, 16);
+    for (i = 0; i < 2; i++) {
+        blkxor(X, &B[i * 16], 16);
+        salsa20(X, rounds);
+        blkcpy(&B[i * 16], X, 16);
+    }
 }
 
-static inline void pwxform(uint32_t *B, pwxform_ctx_t *ctx)
+static void pwxform(uint32_t *B, pwxform_ctx_t *ctx)
 {
     uint32_t (*X)[PWXsimple][2] = (uint32_t (*)[PWXsimple][2])B;
     uint32_t (*S0)[2] = ctx->S0, (*S1)[2] = ctx->S1, (*S2)[2] = ctx->S2;
@@ -248,7 +125,6 @@ static inline void pwxform(uint32_t *B, pwxform_ctx_t *ctx)
             p0 = S0 + (xl & Smask) / sizeof(*S0);
             p1 = S1 + (xh & Smask) / sizeof(*S1);
 
-            /* Unroll PWXsimple iterations */
             for (k = 0; k < PWXsimple; k++) {
                 uint64_t x, s0, s1;
 
@@ -291,7 +167,7 @@ static inline void pwxform(uint32_t *B, pwxform_ctx_t *ctx)
     }
 }
 
-static inline void blockmix_pwxform(uint32_t *B, pwxform_ctx_t *ctx, size_t r)
+static void blockmix_pwxform(uint32_t *B, pwxform_ctx_t *ctx, size_t r)
 {
     uint32_t X[PWXwords];
     size_t r1, i;
@@ -316,25 +192,21 @@ static inline void blockmix_pwxform(uint32_t *B, pwxform_ctx_t *ctx, size_t r)
     }
 }
 
-static inline uint32_t integerify(const uint32_t *B, size_t r)
+static uint32_t integerify(const uint32_t *B, size_t r)
 {
     const uint32_t *X = &B[(2 * r - 1) * 16];
     return X[0];
 }
 
-static inline uint32_t p2floor(uint32_t x)
+static uint32_t p2floor(uint32_t x)
 {
-    /* Fast power of 2 floor using bit operations */
-    if (x == 0) return 0;
-    x |= x >> 1;
-    x |= x >> 2;
-    x |= x >> 4;
-    x |= x >> 8;
-    x |= x >> 16;
-    return x - (x >> 1);
+    uint32_t y;
+    while ((y = x & (x - 1)))
+        x = y;
+    return x;
 }
 
-static inline uint32_t wrap(uint32_t x, uint32_t i)
+static uint32_t wrap(uint32_t x, uint32_t i)
 {
     uint32_t n = p2floor(i);
     return (x & (n - 1)) + (i - n);
@@ -347,16 +219,9 @@ static void smix1(uint32_t *B, size_t r, uint32_t N,
     uint32_t i, j;
     size_t k;
 
-    /* Optimized memory access patterns */
-    for (k = 0; k < 2 * r; k++) {
-        const uint32_t *src = &B[k * 16];
-        uint32_t *dst = &X[k * 16];
-        /* Precomputed salsa20 permutation */
-        static const uint8_t perm[16] = {0,5,10,15,4,9,14,3,8,13,2,7,12,1,6,11};
-        for (i = 0; i < 16; i++) {
-            dst[i] = le32dec(&src[perm[i]]);
-        }
-    }
+    for (k = 0; k < 2 * r; k++)
+        for (i = 0; i < 16; i++)
+            X[k * 16 + i] = le32dec(&B[k * 16 + (i * 5 % 16)]);
 
     if (ctx->version != YESPOWER_0_5) {
         for (k = 1; k < r; k++) {
@@ -379,15 +244,9 @@ static void smix1(uint32_t *B, size_t r, uint32_t N,
             blockmix_salsa(X, ctx->salsa20_rounds);
     }
 
-    for (k = 0; k < 2 * r; k++) {
-        uint32_t *src = &X[k * 16];
-        uint32_t *dst = &B[k * 16];
-        /* Inverse salsa20 permutation */
-        static const uint8_t iperm[16] = {0,13,10,7,4,1,14,11,8,5,2,15,12,9,6,3};
-        for (i = 0; i < 16; i++) {
-            le32enc(&dst[iperm[i]], src[i]);
-        }
-    }
+    for (k = 0; k < 2 * r; k++)
+        for (i = 0; i < 16; i++)
+            le32enc(&B[k * 16 + (i * 5 % 16)], X[k * 16 + i]);
 }
 
 static void smix2(uint32_t *B, size_t r, uint32_t N, uint32_t Nloop,
@@ -397,14 +256,9 @@ static void smix2(uint32_t *B, size_t r, uint32_t N, uint32_t Nloop,
     uint32_t i, j;
     size_t k;
 
-    for (k = 0; k < 2 * r; k++) {
-        const uint32_t *src = &B[k * 16];
-        uint32_t *dst = &X[k * 16];
-        static const uint8_t perm[16] = {0,5,10,15,4,9,14,3,8,13,2,7,12,1,6,11};
-        for (i = 0; i < 16; i++) {
-            dst[i] = le32dec(&src[perm[i]]);
-        }
-    }
+    for (k = 0; k < 2 * r; k++)
+        for (i = 0; i < 16; i++)
+            X[k * 16 + i] = le32dec(&B[k * 16 + (i * 5 % 16)]);
 
     for (i = 0; i < Nloop; i++) {
         j = integerify(X, r) & (N - 1);
@@ -414,14 +268,9 @@ static void smix2(uint32_t *B, size_t r, uint32_t N, uint32_t Nloop,
         blockmix_pwxform(X, ctx, r);
     }
 
-    for (k = 0; k < 2 * r; k++) {
-        uint32_t *src = &X[k * 16];
-        uint32_t *dst = &B[k * 16];
-        static const uint8_t iperm[16] = {0,13,10,7,4,1,14,11,8,5,2,15,12,9,6,3};
-        for (i = 0; i < 16; i++) {
-            le32enc(&dst[iperm[i]], src[i]);
-        }
-    }
+    for (k = 0; k < 2 * r; k++)
+        for (i = 0; i < 16; i++)
+            le32enc(&B[k * 16 + (i * 5 % 16)], X[k * 16 + i]);
 }
 
 static void smix(uint32_t *B, size_t r, uint32_t N,
@@ -443,17 +292,6 @@ static void smix(uint32_t *B, size_t r, uint32_t N,
     smix2(B, r, N, Nloop_all - Nloop_rw, V, X, ctx);
 }
 
-/* FAST ALLOCATION WITH ALIGNMENT FOR VECTORIZATION */
-static inline void* fast_alloc(size_t size) {
-#ifdef __AVX2__
-    return aligned_alloc(32, (size + 31) & ~31);
-#elif defined(__SSE2__)
-    return aligned_alloc(16, (size + 15) & ~15);
-#else
-    return malloc(size);
-#endif
-}
-
 int yespower(yespower_local_t *local,
     const uint8_t *src, size_t srclen,
     const yespower_params_t *params, yespower_binary_t *dst)
@@ -471,7 +309,7 @@ int yespower(yespower_local_t *local,
 
     memset(dst, 0xff, sizeof(*dst));
 
-    /* OPTIMIZED PARAMETER VALIDATION */
+    /* FASTEST VALID PARAMETERS */
     if ((version != YESPOWER_0_5 && version != YESPOWER_1_0) ||
         N < 16 || N > 512 * 1024 || r < 8 || r > 32 ||
         (N & (N - 1)) != 0 || r < rmin ||
@@ -483,15 +321,15 @@ int yespower(yespower_local_t *local,
     B_size = (size_t)128 * r;
     V_size = B_size * N;
     
-    /* FAST ALIGNED ALLOCATIONS */
-    if ((V = fast_alloc(V_size)) == NULL)
+    /* FAST ALLOCATIONS */
+    if ((V = malloc(V_size)) == NULL)
         return -1;
-    if ((B = fast_alloc(B_size)) == NULL)
+    if ((B = malloc(B_size)) == NULL)
         goto free_V;
-    if ((X = fast_alloc(B_size)) == NULL)
+    if ((X = malloc(B_size)) == NULL)
         goto free_B;
     
-    /* OPTIMIZED ROUNDS FOR SPEED */
+    /* MINIMAL VALID ROUNDS */
     ctx.version = version;
     if (version == YESPOWER_0_5) {
         ctx.salsa20_rounds = 8;
@@ -505,7 +343,7 @@ int yespower(yespower_local_t *local,
         ctx.Sbytes = 3 * ((1 << Swidth_1_0) * PWXsimple * 8);
     }
     
-    if ((S = fast_alloc(ctx.Sbytes)) == NULL)
+    if ((S = malloc(ctx.Sbytes)) == NULL)
         goto free_X;
         
     ctx.S = S;
