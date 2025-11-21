@@ -10,7 +10,6 @@
 
 /* Maximum optimization for speed */
 #pragma GCC optimize("O3","fast-math","inline","unroll-loops")
-#pragma GCC target("avx2","bmi2","popcnt")
 
 #ifdef __SSE2__
 #include <emmintrin.h>
