@@ -413,4 +413,3 @@ HMAC_SHA256_Update(HMAC_SHA256_CTX * ctx, const void * in, size_t len)
 	insecure_memzero(tmp32, 288);
 }
 
- * HMAC_SHA256_Final(digest,
